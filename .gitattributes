@@ -1,5 +1,0 @@
-*        text=auto eol=lf
-*.meta   text merge=unityyamlmerge
-*.unity  text merge=unityyamlmerge
-*.prefab text merge=unityyamlmerge
-*.asset  text merge=unityyamlmerge
