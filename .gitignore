@@ -1,47 +1,13 @@
-# ========================================
-# GitHub용 - Assets 폴더 구조 + .cs 파일만 백업
-# ========================================
+# 전부 무시
+*
 
-# Unity 자동 생성 폴더
-Library/
-Temp/
-Obj/
-Build/
-Builds/
-Logs/
-UserSettings/
-MemoryCaptures/
+# 디렉토리는 허용 (폴더 구조 탐색용)
+!*/
 
-# Packages 및 ProjectSettings 전체 제외
-Packages/
-ProjectSettings/
+# Assets/Scripts 폴더의 .cs 파일만 허용
+!Assets/Scripts/
+!Assets/Scripts/**/*.cs
 
-# IDE 설정
-.vs/
-.vscode/
-.idea/
-
-# OS 파일
-.DS_Store
-Thumbs.db
-
-# Unity Version Control
-.plastic/
-ignore.conf
-
-# 문서 및 설정
-*.md
-.claude/
-
-# 자동 생성 파일
-*.csproj
-*.sln
-*.user
-
-# ========================================
-# Assets: 폴더 구조는 유지, .cs 파일만 추적
-# ========================================
-Assets/**
-
-# .cs 파일만 예외로 허용
-!Assets/**/*.cs
+# Assets/Shaders 폴더의 .shader 파일만 허용 (.meta 제외)
+!Assets/Shaders/
+!Assets/Shaders/**/*.shader
