@@ -1,36 +1,47 @@
-# 제외 폴더
-[Ll]ibrary/
-[Tt]emp/
-[Oo]bj/
-[Bb]uild*/
-[Ll]ogs/
-[Ee]xternal Assets/
+# ========================================
+# GitHub용 - Assets 폴더 구조 + .cs 파일만 백업
+# ========================================
+
+# Unity 자동 생성 폴더
+Library/
+Temp/
+Obj/
+Build/
+Builds/
+Logs/
 UserSettings/
 MemoryCaptures/
+
+# Packages 및 ProjectSettings 전체 제외
+Packages/
+ProjectSettings/
+
+# IDE 설정
 .vs/
+.vscode/
 .idea/
+
+# OS 파일
 .DS_Store
 Thumbs.db
+
+# Unity Version Control
+.plastic/
+ignore.conf
+
+# 문서 및 설정
 *.md
-.claude
+.claude/
+
+# 자동 생성 파일
 *.csproj
 *.sln
-.vscode/
+*.user
 
-# 패키지/설정 포함
-!Packages/
-Packages/manifest.json
-Packages/packages-lock.json
-!ProjectSettings/
-ProjectSettings/ProjectVersion.txt
-ProjectSettings/ProjectSettings.asset
-
-# 기본은 전부 무시
+# ========================================
+# Assets: 폴더 구조는 유지, .cs 파일만 추적
+# ========================================
 Assets/**
-# 예외: 코드/씬/프리팹 + .meta만 허용
+
+# .cs 파일만 예외로 허용
 !Assets/**/*.cs
-!Assets/**/*.asmdef
-!Assets/**/*.asmref
-!Assets/**/*.unity
-!Assets/**/*.prefab
-!Assets/**/*.meta
