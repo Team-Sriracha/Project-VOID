@@ -13,6 +13,10 @@ MemoryCaptures/
 Thumbs.db
 *.md
 .claude
+*.csproj
+*.sln
+.plastic/
+.vscode
 
 # 패키지/설정 포함
 !Packages/
@@ -31,8 +35,3 @@ Assets/**
 !Assets/**/*.unity
 !Assets/**/*.prefab
 !Assets/**/*.meta
-
-# (원하면 특정 폴더만 허용)
-# !Assets/Scenes/**
-# !Assets/Prefabs/**
-# !Assets/Scripts/**
