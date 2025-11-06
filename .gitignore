@@ -16,7 +16,7 @@ Thumbs.db
 *.csproj
 *.sln
 .plastic/
-.vscode
+.vscode/
 
 # 패키지/설정 포함
 !Packages/
