@@ -178,11 +178,9 @@ namespace ProjectVoid.Map
                 }
             }
 
-            // 실제 생성 정보 기록: 문 생성 = 문 있음 (부분 생성의 경우 나중에 덮어쓸 수 있음)
-            if (startWallIndex == 0 && endWallIndex < 0)
-            {
-                _actualDoors[direction] = true;
-            }
+            // 실제 생성 정보 기록: 문 생성 = 문 있음
+            // 부분 벽 생성이더라도 문이 포함되어 있으면 기록
+            _actualDoors[direction] = true;
         }
 
         /// <summary>
