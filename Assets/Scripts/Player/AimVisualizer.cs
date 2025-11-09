@@ -12,7 +12,6 @@ public class AimVisualizer : MonoBehaviour
     [SerializeField] private Material _aimMaterial;
     [SerializeField] private Transform _aimPoint;
     [SerializeField] private float _lineWidth = 0.2f;
-    [SerializeField] private float _lineHeightOffset = 0.1f;
 
     [Header("부채꼴 설정")]
     [SerializeField] private int _fanSegments = 15;
@@ -66,9 +65,9 @@ public class AimVisualizer : MonoBehaviour
 
         _lineQuad.SetActive(true);
 
-        Vector3 startPos = _aimPoint.position + Vector3.up * _lineHeightOffset;
+        Vector3 startPos = _aimPoint.position;
         float actualRange = range;
-        Vector3 rayStart = startPos + Vector3.up * _raycastOffset;
+        Vector3 rayStart = startPos * _raycastOffset;
 
         // Why: 장애물 감지 - 벽에 맞으면 거리 단축
         if (Physics.Raycast(rayStart, direction, out RaycastHit hit, range, _obstacleLayers))
@@ -108,12 +107,12 @@ public class AimVisualizer : MonoBehaviour
 
         _fanMesh.SetActive(true);
 
-        Vector3 startPos = _aimPoint.position + Vector3.up * _fanHeightOffset;
+        Vector3 startPos = _aimPoint.position;
         int segments = _fanSegments;
         float[] segmentRanges = new float[segments + 1];
         float halfAngle = angle / 2f;
         Quaternion rotation = Quaternion.LookRotation(direction);
-        Vector3 rayStart = startPos + Vector3.up * _raycastOffset;
+        Vector3 rayStart = startPos * _raycastOffset;
 
         // Why: 각 세그먼트마다 개별 Raycast
         for (int i = 0; i <= segments; i++)

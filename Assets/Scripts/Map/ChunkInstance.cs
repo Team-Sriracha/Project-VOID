@@ -14,8 +14,6 @@ namespace ProjectVoid.Map
         private ChunkPrefabData _chunkData;
         private Vector2Int _gridPosition;
         private List<GameObject> _wallObjects = new List<GameObject>();
-        private Grid _grid;
-        private Transform _groundTransform;
 
         /// <summary>
         /// 실제 생성된 문 정보 (절차적 생성 결과)
@@ -52,31 +50,6 @@ namespace ProjectVoid.Map
         {
             _chunkData = chunkData;
             _gridPosition = gridPosition;
-
-            // Grid 컴포넌트 찾기 (Grid 좌표계 사용을 위해)
-            _grid = GetComponentInChildren<Grid>();
-            if (_grid == null)
-            {
-                Debug.LogWarning($"청크 {_gridPosition}: Grid 컴포넌트를 찾을 수 없습니다!");
-            }
-
-            // Ground Transform 찾기 (벽 배치 기준점)
-            // Chunk/Ground 구조를 고려하여 재귀적으로 찾기
-            Transform[] allChildren = GetComponentsInChildren<Transform>();
-            foreach (Transform child in allChildren)
-            {
-                if (child.name == "Ground")
-                {
-                    _groundTransform = child;
-                    break;
-                }
-            }
-
-            if (_groundTransform == null)
-            {
-                Debug.LogWarning($"청크 {_gridPosition}: Ground를 찾을 수 없습니다! Chunk 기준으로 배치됩니다.");
-                _groundTransform = transform; // Fallback
-            }
         }
 
         #endregion
@@ -204,7 +177,6 @@ namespace ProjectVoid.Map
 
         /// <summary>
         /// 벽/문의 World Position을 계산합니다.
-        /// Ground Transform을 기준으로 벽 위치 계산
         /// effectiveLength: 해당 방향의 실제 벽 길이 (멀티 칸 청크 고려)
         /// chunkSize: 단일 칸의 크기 (설정값, 기본 27)
         /// </summary>
@@ -230,19 +202,15 @@ namespace ProjectVoid.Map
             float floorCenterX = width * chunkSize / 2f;
             float floorCenterZ = height * chunkSize / 2f;
 
-            // North/East: 바깥쪽 (+0.5, 이웃과 겹침)
-            // South/West: 안쪽 (-0.5, 외벽용)
-            float wallOffsetZ_North = height * chunkSize / 2f + 0.5f;  // North: 바깥쪽
-            float wallOffsetZ_South = height * chunkSize / 2f - 0.5f;  // South: 안쪽
-            float wallOffsetX_East = width * chunkSize / 2f + 0.5f;    // East: 바깥쪽
-            float wallOffsetX_West = width * chunkSize / 2f - 0.5f;    // West: 안쪽
-
+            // 벽을 청크 경계에 정확히 배치
+            // North/East만 생성하는 로직이므로 경계에 딱 맞춰 배치
+            // 이웃 청크가 있으면 South/West는 생성 안 함 → 겹침 없음
             Vector3 localOffset = direction switch
             {
-                EDirection.North => new Vector3(floorCenterX + positionAlongEdge, 0, floorCenterZ + wallOffsetZ_North),
-                EDirection.South => new Vector3(floorCenterX + positionAlongEdge, 0, floorCenterZ - wallOffsetZ_South),
-                EDirection.East => new Vector3(floorCenterX + wallOffsetX_East, 0, floorCenterZ + positionAlongEdge),
-                EDirection.West => new Vector3(floorCenterX - wallOffsetX_West, 0, floorCenterZ + positionAlongEdge),
+                EDirection.North => new Vector3(floorCenterX + positionAlongEdge, 0, height * chunkSize),
+                EDirection.South => new Vector3(floorCenterX + positionAlongEdge, 0, 0),
+                EDirection.East => new Vector3(width * chunkSize, 0, floorCenterZ + positionAlongEdge),
+                EDirection.West => new Vector3(0, 0, floorCenterZ + positionAlongEdge),
                 _ => Vector3.zero
             };
 
@@ -273,13 +241,7 @@ namespace ProjectVoid.Map
         /// </summary>
         public bool HasDoor(EDirection direction)
         {
-            if (_actualDoors.TryGetValue(direction, out bool hasDoor))
-            {
-                return hasDoor;
-            }
-
-            // Fallback: 생성 전이면 ChunkData 기준 (레거시)
-            return _chunkData != null && _chunkData.HasDoor(direction);
+            return _actualDoors.TryGetValue(direction, out bool hasDoor) && hasDoor;
         }
 
         /// <summary>

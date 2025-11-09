@@ -680,28 +680,6 @@ namespace ProjectVoid.Map
         }
 
         /// <summary>
-        /// 두 청크가 같은 그룹에 속하는지 확인 (같은 그룹이면 내부 벽 제거)
-        /// </summary>
-        private bool IsChunkGroupBoundary(Vector2Int pos1, Vector2Int pos2)
-        {
-            // 두 위치 모두 그룹 ID가 있는지 확인
-            if (!_chunkGroupIds.TryGetValue(pos1, out int groupId1) ||
-                !_chunkGroupIds.TryGetValue(pos2, out int groupId2))
-            {
-                return false;
-            }
-
-            // 그룹 ID가 0이면 독립적인 청크 (그룹 없음)
-            if (groupId1 == 0 || groupId2 == 0)
-            {
-                return false;
-            }
-
-            // 같은 그룹 ID를 가지면 true 반환
-            return groupId1 == groupId2;
-        }
-
-        /// <summary>
         /// 그룹 청크의 특정 방향에 외부 이웃이 있는지 확인하고, 각 셀별 이웃 정보를 반환
         /// </summary>
         /// <returns>(이웃 존재 여부, 셀별 이웃 마스크)</returns>
@@ -1025,24 +1003,6 @@ namespace ProjectVoid.Map
             return true;
         }
 
-        private List<Vector2Int> GetGroupCells(MapLayoutTemplate template, int groupId)
-        {
-            List<Vector2Int> cells = new List<Vector2Int>();
-
-            for (int y = 0; y < template.Height; y++)
-            {
-                for (int x = 0; x < template.Width; x++)
-                {
-                    if (template.GetChunkGroupId(x, y) == groupId)
-                    {
-                        cells.Add(new Vector2Int(x, y));
-                    }
-                }
-            }
-
-            return cells;
-        }
-
         /// <summary>
         /// 시작 위치로부터 인접한(연결된) 같은 그룹 ID 셀들을 flood fill로 찾습니다.
         /// </summary>
@@ -1082,28 +1042,6 @@ namespace ProjectVoid.Map
             return connectedCells;
         }
 
-        private (int width, int height) CalculateGroupSize(List<Vector2Int> groupCells)
-        {
-            if (groupCells.Count == 0)
-                return (1, 1);
-
-            int minX = int.MaxValue, maxX = int.MinValue;
-            int minY = int.MaxValue, maxY = int.MinValue;
-
-            foreach (var cell in groupCells)
-            {
-                if (cell.x < minX) minX = cell.x;
-                if (cell.x > maxX) maxX = cell.x;
-                if (cell.y < minY) minY = cell.y;
-                if (cell.y > maxY) maxY = cell.y;
-            }
-
-            int width = maxX - minX + 1;
-            int height = maxY - minY + 1;
-
-            return (width, height);
-        }
-
         /// <summary>
         /// 그룹의 경계 정보를 반환합니다.
         /// </summary>
@@ -1127,27 +1065,6 @@ namespace ProjectVoid.Map
             int height = maxY - minY + 1;
 
             return (new Vector2Int(minX, minY), width, height);
-        }
-
-        /// <summary>
-        /// 그룹의 중심 위치를 계산합니다 (피벗 위치 = 두 칸 사이 경계 중앙).
-        /// 예: (0,0), (1,0) 그룹 → 중심 = (0.5, 0.5) (각 칸의 중심값 평균)
-        /// </summary>
-        private Vector2 GetGroupCenterPosition(List<Vector2Int> groupCells)
-        {
-            if (groupCells.Count == 0)
-                return Vector2.zero;
-
-            float sumX = 0;
-            float sumY = 0;
-
-            foreach (var cell in groupCells)
-            {
-                sumX += cell.x + 0.5f; // 각 칸의 중심
-                sumY += cell.y + 0.5f;
-            }
-
-            return new Vector2(sumX / groupCells.Count, sumY / groupCells.Count);
         }
 
         /// <summary>

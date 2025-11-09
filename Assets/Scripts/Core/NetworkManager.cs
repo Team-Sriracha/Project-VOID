@@ -14,6 +14,7 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
 
     [Header("네트워크 설정")]
     [SerializeField] private string _roomName = "TestRoom";
+    [SerializeField] private int _maxPlayers = 8;
 
     [Header("플레이어 설정")]
     [SerializeField] private NetworkPrefabRef _playerPrefab;
@@ -65,9 +66,7 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
             SessionName = _roomName,
             Scene = SceneRef.FromIndex(UnityEngine.SceneManagement.SceneManager.GetActiveScene().buildIndex),
             SceneManager = gameObject.AddComponent<NetworkSceneManagerDefault>(),
-            IsVisible = true,  // Why: 클라이언트가 세션을 찾을 수 있도록 설정
-            IsOpen = true,     // Why: 클라이언트 접속 허용
-            PlayerCount = 10   // Why: 최대 플레이어 수 설정
+            PlayerCount = _maxPlayers  // Why: 최대 플레이어 수 설정
         });
 
         if (result.Ok)
@@ -119,6 +118,7 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
         // Why: Server만 플레이어 스폰 처리
         if (runner.IsServer)
         {
+            //TODO : 스폰포인트 지정 시스템 구현
             Vector3 spawnPosition = new Vector3(UnityEngine.Random.Range(-5f, 5f), 1f, UnityEngine.Random.Range(-5f, 5f));
 
             // Why: 네 번째 파라미터로 player 전달 시 자동으로 InputAuthority 할당됨

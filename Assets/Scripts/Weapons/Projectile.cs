@@ -11,9 +11,6 @@ public class Projectile : NetworkBehaviour
 
     [Header("발사체 설정")]
     [SerializeField] private float _maxLifetime = 5f;
-    [SerializeField] private float _minDistanceToCheckHit = 1f;
-    [SerializeField] private string _projectileLayerName = "Projectile";
-    [SerializeField] private string _ownProjectileLayerName = "PlayerOwnProjectile";
 
     [Header("시각 효과")]
     [SerializeField] private GameObject _hitEffectPrefab;
@@ -39,6 +36,7 @@ public class Projectile : NetworkBehaviour
     #region Private Fields
 
     private bool _hasHit;
+    private Collider _projectileCollider;
 
     #endregion
 
@@ -47,12 +45,12 @@ public class Projectile : NetworkBehaviour
     public override void Spawned()
     {
         _hasHit = false;
+        _projectileCollider = GetComponent<Collider>();
 
-        // Why: 발사 시 본인 전용 Layer로 설정 (본인과 충돌 안함)
-        int ownLayer = LayerMask.NameToLayer(_ownProjectileLayerName);
-        if (ownLayer != -1)
+        // Why: 발사자의 모든 Collider와 충돌 무시 설정
+        if (Runner.TryGetPlayerObject(Owner, out NetworkObject ownerObject))
         {
-            gameObject.layer = ownLayer;
+            IgnoreCollisionWithOwner(ownerObject);
         }
 
         if (HasStateAuthority && IsInitialized)
@@ -95,19 +93,12 @@ public class Projectile : NetworkBehaviour
             return;
         }
 
-        // Why: 일정 거리 이동 후 일반 Projectile Layer로 변경 (다른 플레이어와 충돌 가능)
-        if (traveledDistance >= _minDistanceToCheckHit && gameObject.layer != LayerMask.NameToLayer(_projectileLayerName))
-        {
-            int newLayer = LayerMask.NameToLayer(_projectileLayerName);
-            gameObject.layer = newLayer;
-        }
-
         // ✅ Transform 기반 이동 + Raycast 충돌 감지
         float moveDistance = Speed * Runner.DeltaTime;
         Vector3 movement = Direction.normalized * moveDistance;
 
-        // Why: 이동 경로에 충돌 체크 (벽 통과 방지)
-        if (Physics.Raycast(transform.position, Direction, out RaycastHit hit, moveDistance, ~LayerMask.GetMask(_ownProjectileLayerName)))
+        // Why: 이동 경로에 충돌 체크
+        if (Physics.Raycast(transform.position, Direction, out RaycastHit hit, moveDistance))
         {
             // 충돌 처리
             HandleHit(hit);
@@ -121,18 +112,41 @@ public class Projectile : NetworkBehaviour
 
     #endregion
 
+    #region Collision Ignore
+
+    /// <summary>
+    /// 발사자의 모든 Collider와 충돌을 무시합니다.
+    /// </summary>
+    private void IgnoreCollisionWithOwner(NetworkObject ownerObject)
+    {
+        if (_projectileCollider == null)
+        {
+            Debug.LogWarning("[Projectile] Collider가 없습니다!");
+            return;
+        }
+
+        // Why: 발사자의 모든 Collider 찾기 (본체 + 자식 포함)
+        Collider[] ownerColliders = ownerObject.GetComponentsInChildren<Collider>();
+
+        int ignoredCount = 0;
+        foreach (Collider ownerCollider in ownerColliders)
+        {
+            // Why: Trigger는 제외 (데미지 판정용 Trigger 등)
+            if (ownerCollider.isTrigger) continue;
+
+            // Why: 영구적으로 충돌 무시
+            Physics.IgnoreCollision(_projectileCollider, ownerCollider, true);
+            ignoredCount++;
+        }
+    }
+
+    #endregion
+
     #region Collision Handling
 
     private void HandleHit(RaycastHit hit)
     {
         if (_hasHit) return;
-
-        // Why: 발사한 플레이어 본인과의 충돌 무시
-        NetworkObject hitNetworkObject = hit.collider.GetComponentInParent<NetworkObject>();
-        if (hitNetworkObject != null && hitNetworkObject.InputAuthority == Owner)
-        {
-            return;
-        }
 
         _hasHit = true;
 
