@@ -81,6 +81,19 @@ public class PlayerController : NetworkBehaviour
             PlayerID = $"Player_{Object.InputAuthority.PlayerId}";
             MoveSpeedMultiplier = 1f;
         }
+
+        if (UIManager.Instance != null)
+        {
+            UIManager.Instance.RegisterPlayerOverheadUI(transform);
+        }
+    }
+
+    public override void Despawned(NetworkRunner runner, bool hasState)
+    {
+        if (UIManager.Instance != null)
+        {
+            UIManager.Instance.UnregisterPlayerOverheadUI(transform);
+        }
     }
 
     public override void FixedUpdateNetwork()

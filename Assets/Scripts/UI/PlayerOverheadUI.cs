@@ -5,7 +5,7 @@ using UnityEngine.UI;
 
 /// <summary>
 /// 플레이어 오버헤드 UI를 관리합니다 (HP바, 레벨, ID, 탄약, 재장전바).
-/// 개선점: UI가 자체적으로 컴포넌트를 참조하여 업데이트 (Controller와 분리)
+/// Screen Space Overlay 방식으로 항상 가장 앞에 표시됩니다.
 /// </summary>
 public class PlayerOverheadUI : MonoBehaviour
 {
@@ -28,6 +28,21 @@ public class PlayerOverheadUI : MonoBehaviour
     [SerializeField] private Slider _reloadBar;
     [SerializeField] private GameObject _reloadPanel;
 
+    [Header("Screen Space 설정")]
+    [Tooltip("추적할 플레이어 Transform")]
+    [SerializeField] private Transform _targetPlayer;
+
+    [Tooltip("플레이어 머리 위 오프셋 (Y축)")]
+    [SerializeField] private float _headOffset = 2f;
+
+    [Header("성능 최적화")]
+    [Tooltip("UI 정보 업데이트 간격 (초) - HP, 탄약 등")]
+    [SerializeField] private float _uiUpdateInterval = 0.033f;
+
+    [Header("위치 스무딩")]
+    [Tooltip("UI 위치 스무딩 속도 (높을수록 빠르게 따라감)")]
+    [SerializeField] private float _positionSmoothSpeed = 50f;
+
     #endregion
 
     #region Private Fields
@@ -38,6 +53,10 @@ public class PlayerOverheadUI : MonoBehaviour
     private NetworkRunner _runner;
     private NetworkObject _networkObject;
     private bool _isInitialized;
+    private float _lastUIUpdateTime;
+    private Camera _mainCamera;
+    private RectTransform _rectTransform;
+    private Vector3 _smoothScreenPosition;
 
     #endregion
 
@@ -45,14 +64,29 @@ public class PlayerOverheadUI : MonoBehaviour
 
     private void Start()
     {
-        InitializeReferences();
+        _mainCamera = Camera.main;
+        _rectTransform = GetComponent<RectTransform>();
+        _smoothScreenPosition = _rectTransform.position;
     }
 
     private void Update()
     {
         if (!_isInitialized) return;
 
-        UpdateAllUI();
+        float currentTime = Time.time;
+
+        if (currentTime - _lastUIUpdateTime >= _uiUpdateInterval)
+        {
+            UpdateAllUI();
+            _lastUIUpdateTime = currentTime;
+        }
+    }
+
+    private void LateUpdate()
+    {
+        if (!_isInitialized || _targetPlayer == null || _mainCamera == null) return;
+
+        UpdateScreenPosition();
     }
 
     #endregion
@@ -60,23 +94,26 @@ public class PlayerOverheadUI : MonoBehaviour
     #region Initialization
 
     /// <summary>
-    /// 부모 플레이어 오브젝트에서 컴포넌트 참조를 찾습니다.
+    /// 타겟 플레이어를 설정합니다.
+    /// </summary>
+    public void SetTargetPlayer(Transform playerTransform)
+    {
+        _targetPlayer = playerTransform;
+        InitializeReferences();
+    }
+
+    /// <summary>
+    /// 타겟 플레이어 오브젝트에서 컴포넌트 참조를 찾습니다.
     /// </summary>
     private void InitializeReferences()
     {
-        // Why: 오버헤드 UI는 플레이어의 자식 오브젝트
-        Transform playerRoot = transform.parent;
-        if (playerRoot == null)
-        {
-            Debug.LogError("[PlayerOverheadUI] 부모 플레이어 오브젝트를 찾을 수 없습니다!");
-            return;
-        }
+        if (_targetPlayer == null) return;
 
-        _combat = playerRoot.GetComponent<PlayerCombat>();
-        _controller = playerRoot.GetComponent<PlayerController>();
-        _weapon = playerRoot.GetComponent<NetworkedWeapon>();
+        _combat = _targetPlayer.GetComponent<PlayerCombat>();
+        _controller = _targetPlayer.GetComponent<PlayerController>();
+        _weapon = _targetPlayer.GetComponent<NetworkedWeapon>();
 
-        _networkObject = playerRoot.GetComponent<NetworkObject>();
+        _networkObject = _targetPlayer.GetComponent<NetworkObject>();
         if (_networkObject != null)
         {
             _runner = _networkObject.Runner;
@@ -86,12 +123,42 @@ public class PlayerOverheadUI : MonoBehaviour
 
         if (_isInitialized)
         {
-            // Why: 초기 ID 설정
             UpdatePlayerID();
-
-            // Why: 재장전 바 초기 상태 숨김
             HideReload();
         }
+    }
+
+    #endregion
+
+    #region Screen Position Update
+
+    /// <summary>
+    /// 플레이어의 월드 좌표를 스크린 좌표로 변환하여 UI 위치를 업데이트합니다.
+    /// </summary>
+    private void UpdateScreenPosition()
+    {
+        Vector3 worldPosition = _targetPlayer.position + Vector3.up * _headOffset;
+        Vector3 targetScreenPosition = _mainCamera.WorldToScreenPoint(worldPosition);
+
+        if (targetScreenPosition.z < 0 ||
+            targetScreenPosition.x < 0 || targetScreenPosition.x > Screen.width ||
+            targetScreenPosition.y < 0 || targetScreenPosition.y > Screen.height)
+        {
+            if (_rectTransform.gameObject.activeSelf)
+                _rectTransform.gameObject.SetActive(false);
+            return;
+        }
+
+        if (!_rectTransform.gameObject.activeSelf)
+            _rectTransform.gameObject.SetActive(true);
+
+        _smoothScreenPosition = Vector3.Lerp(
+            _smoothScreenPosition,
+            targetScreenPosition,
+            _positionSmoothSpeed * Time.deltaTime
+        );
+
+        _rectTransform.position = _smoothScreenPosition;
     }
 
     #endregion

@@ -19,6 +19,7 @@ public class PlayerCameraAssigner : NetworkBehaviour
     #region Private Fields
 
     private CinemachineCamera _localCamera;
+    private GameObject _cameraTarget;
 
     #endregion
 
@@ -53,16 +54,20 @@ public class PlayerCameraAssigner : NetworkBehaviour
             return;
         }
 
+        // Why: 높은 followSpeed로 즉각 반응 + 미세 스무딩
+        _cameraTarget = new GameObject($"CameraTarget_{Object.InputAuthority}");
+        CameraTarget smoothTarget = _cameraTarget.AddComponent<CameraTarget>();
+        smoothTarget.SetTarget(transform);
+        smoothTarget.SetFollowSpeed(50f);
+
         // Virtual Camera 인스턴스 생성
         _localCamera = Instantiate(_virtualCameraPrefab);
         _localCamera.name = $"PlayerCamera_{Object.InputAuthority}";
 
-        // Why: Follow 타겟을 플레이어로 설정하여 카메라가 플레이어를 추적
-        _localCamera.Target.TrackingTarget = transform;
-
-        // Why: 탑다운 뷰에서는 LookAt도 동일한 타겟 사용
-        // Position Control과 Rotation Control이 같은 타겟을 추적
-        _localCamera.Target.LookAtTarget = transform;
+        // Why: 카메라는 플레이어를 직접 추적하지 않고 스무스 타겟을 추적
+        // 이렇게 하면 네트워크 보간과 상관없이 항상 부드러움
+        _localCamera.Target.TrackingTarget = _cameraTarget.transform;
+        _localCamera.Target.LookAtTarget = _cameraTarget.transform;
 
         Debug.Log($"[PlayerCameraAssigner] 로컬 플레이어 카메라 생성 완료: {_localCamera.name}");
     }
@@ -76,8 +81,15 @@ public class PlayerCameraAssigner : NetworkBehaviour
         {
             Destroy(_localCamera.gameObject);
             _localCamera = null;
-            Debug.Log("[PlayerCameraAssigner] 로컬 플레이어 카메라 제거 완료");
         }
+
+        if (_cameraTarget != null)
+        {
+            Destroy(_cameraTarget);
+            _cameraTarget = null;
+        }
+
+        Debug.Log("[PlayerCameraAssigner] 로컬 플레이어 카메라 제거 완료");
     }
 
     #endregion

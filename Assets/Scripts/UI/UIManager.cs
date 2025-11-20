@@ -37,6 +37,10 @@ public class UIManager : MonoBehaviour
     [Header("게임 결과")]
     [SerializeField] private GameResultUI _gameResultUI;
 
+    [Header("플레이어 오버헤드 UI")]
+    [SerializeField] private PlayerOverheadUI _overheadUIPrefab;
+    [SerializeField] private Transform _overheadUIContainer;
+
     #endregion
 
     #region Private Fields
@@ -44,6 +48,7 @@ public class UIManager : MonoBehaviour
     private Queue<KillLogEntry> _killLogPool = new Queue<KillLogEntry>();
     private PlayerInventory _cachedInventory;
     private Canvas _canvas;
+    private Dictionary<Transform, PlayerOverheadUI> _overheadUIs = new Dictionary<Transform, PlayerOverheadUI>();
 
     #endregion
 
@@ -248,6 +253,50 @@ public class UIManager : MonoBehaviour
         if (_gameResultUI != null)
         {
             _gameResultUI.ShowDefeat(killCount, survivalTime, rank);
+        }
+    }
+
+    #endregion
+
+    #region 오버헤드 UI
+
+    /// <summary>
+    /// 플레이어의 오버헤드 UI를 등록합니다.
+    /// </summary>
+    public void RegisterPlayerOverheadUI(Transform playerTransform)
+    {
+        if (_overheadUIPrefab == null)
+        {
+            Debug.LogError("[UIManager] OverheadUI 프리팹이 설정되지 않았습니다!");
+            return;
+        }
+
+        if (_overheadUIs.ContainsKey(playerTransform))
+        {
+            Debug.LogWarning($"[UIManager] {playerTransform.name}의 오버헤드 UI가 이미 등록되어 있습니다!");
+            return;
+        }
+
+        Transform container = _overheadUIContainer != null ? _overheadUIContainer : _canvas.transform;
+        PlayerOverheadUI ui = Instantiate(_overheadUIPrefab, container);
+        ui.SetTargetPlayer(playerTransform);
+
+        _overheadUIs.Add(playerTransform, ui);
+
+        Debug.Log($"[UIManager] {playerTransform.name}의 오버헤드 UI 등록 완료");
+    }
+
+    /// <summary>
+    /// 플레이어의 오버헤드 UI를 제거합니다.
+    /// </summary>
+    public void UnregisterPlayerOverheadUI(Transform playerTransform)
+    {
+        if (_overheadUIs.TryGetValue(playerTransform, out PlayerOverheadUI ui))
+        {
+            Destroy(ui.gameObject);
+            _overheadUIs.Remove(playerTransform);
+
+            Debug.Log($"[UIManager] {playerTransform.name}의 오버헤드 UI 제거 완료");
         }
     }
 

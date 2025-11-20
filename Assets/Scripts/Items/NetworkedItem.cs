@@ -358,10 +358,10 @@ public class NetworkedItem : NetworkBehaviour
                 transform.position = DroppedPosition;
 
                 // Why: 착지 후 Rigidbody 완전히 비활성화
-                _rigidbody.isKinematic = true;
-                _rigidbody.useGravity = false;
                 _rigidbody.linearVelocity = Vector3.zero;
                 _rigidbody.angularVelocity = Vector3.zero;
+                _rigidbody.isKinematic = true;
+                _rigidbody.useGravity = false;
 
                 // Why: 클라이언트에도 착지 알림
                 RPC_NotifyLanded(DroppedPosition);
@@ -460,10 +460,14 @@ public class NetworkedItem : NetworkBehaviour
 
         if (_rigidbody != null)
         {
+            // Why: 이미 kinematic이면 velocity를 설정할 수 없으므로 먼저 확인
+            if (!_rigidbody.isKinematic)
+            {
+                _rigidbody.linearVelocity = Vector3.zero;
+                _rigidbody.angularVelocity = Vector3.zero;
+            }
             _rigidbody.isKinematic = true;
             _rigidbody.useGravity = false;
-            _rigidbody.linearVelocity = Vector3.zero;
-            _rigidbody.angularVelocity = Vector3.zero;
         }
 
         Debug.Log($"[NetworkedItem] RPC_NotifyLanded - 위치: {landedPosition}");

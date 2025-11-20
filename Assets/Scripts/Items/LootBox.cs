@@ -33,6 +33,10 @@ public class LootBox : NetworkBehaviour, IDamageable
     [Tooltip("LootBox가 다시 사용 가능해지는 시간 (초)")]
     private float _resetTime = 30f;
 
+    [Header("애니메이션 최적화")]
+    [Tooltip("Open 애니메이션 길이 (초)")]
+    [SerializeField] private float _openAnimationDuration = 1f;
+
     #endregion
 
     #region Private Fields
@@ -155,6 +159,9 @@ public class LootBox : NetworkBehaviour, IDamageable
 
         SpawnLoot();
 
+        // Why: Open 애니메이션 재생 후 Animator speed를 0으로 설정 (성능 최적화)
+        Invoke(nameof(StopAnimatorAfterOpen), _openAnimationDuration);
+
         // Why: 초기화 타이머 시작
         ResetTimer = TickTimer.CreateFromSeconds(Runner, _resetTime);
         Debug.Log($"[LootBox] {_resetTime}초 후 초기화 예정");
@@ -176,6 +183,9 @@ public class LootBox : NetworkBehaviour, IDamageable
 
         // Why: 모든 클라이언트에 Idle 애니메이션 재생 (isOpen = false)
         RPC_PlayIdleAnimation();
+
+        // Why: Animator speed를 1로 복구 (애니메이션 재생 가능)
+        RPC_ResumeAnimator();
     }
 
     private void SpawnLoot()
@@ -239,6 +249,22 @@ public class LootBox : NetworkBehaviour, IDamageable
 
     #endregion
 
+    #region Animation Optimization
+
+    /// <summary>
+    /// Open 애니메이션이 끝난 후 Animator를 비활성화합니다 (성능 최적화)
+    /// </summary>
+    private void StopAnimatorAfterOpen()
+    {
+        if (!HasStateAuthority)
+            return;
+
+        // Why: Open 애니메이션이 완전히 끝난 후 Animator 비활성화 (마지막 포즈 유지)
+        RPC_DisableAnimator();
+    }
+
+    #endregion
+
     #region RPC Methods
 
     [Rpc(RpcSources.StateAuthority, RpcTargets.All)]
@@ -283,6 +309,28 @@ public class LootBox : NetworkBehaviour, IDamageable
         {
             _collider.enabled = enabled;
             Debug.Log($"[LootBox] RPC_SetColliderState - Collider.enabled = {enabled}");
+        }
+    }
+
+    [Rpc(RpcSources.StateAuthority, RpcTargets.All)]
+    private void RPC_DisableAnimator(RpcInfo info = default)
+    {
+        if (_animator != null)
+        {
+            // Why: 애니메이션이 끝난 후 비활성화 (현재 포즈 유지, 업데이트 중지)
+            _animator.enabled = false;
+            Debug.Log("[LootBox] RPC_DisableAnimator - Animator 비활성화");
+        }
+    }
+
+    [Rpc(RpcSources.StateAuthority, RpcTargets.All)]
+    private void RPC_ResumeAnimator(RpcInfo info = default)
+    {
+        if (_animator != null)
+        {
+            // Why: Animator 다시 활성화
+            _animator.enabled = true;
+            Debug.Log("[LootBox] RPC_ResumeAnimator - Animator 활성화");
         }
     }
 
