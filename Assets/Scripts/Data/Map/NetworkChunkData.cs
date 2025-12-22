@@ -1,4 +1,4 @@
-using Fusion;
+﻿using Fusion;
 using UnityEngine;
 
 namespace ProjectVoid.Map
@@ -60,7 +60,7 @@ namespace ProjectVoid.Map
         /// <summary>
         /// 청크 타입을 enum으로 반환합니다.
         /// </summary>
-        public EChunkType Type => (EChunkType)ChunkType;
+        public ChunkType Type => (ChunkType)ChunkType;
 
         #endregion
 
@@ -69,7 +69,7 @@ namespace ProjectVoid.Map
         /// <summary>
         /// NetworkChunkData를 생성합니다.
         /// </summary>
-        public NetworkChunkData(Vector2Int position, EChunkType type, byte doorMask, int groupId = 0, int chunkWidth = 1, int chunkHeight = 1, int chunkIndex = 0)
+        public NetworkChunkData(Vector2Int position, ChunkType type, byte doorMask, int groupId = 0, int chunkWidth = 1, int chunkHeight = 1, int chunkIndex = 0)
         {
             Position = position;
             ChunkType = (byte)type;
@@ -87,7 +87,7 @@ namespace ProjectVoid.Map
         /// <summary>
         /// 특정 방향에 문이 있는지 확인합니다.
         /// </summary>
-        public bool HasDoor(EDirection direction)
+        public bool HasDoor(Direction direction)
         {
             return DirectionExtensions.HasDirection(DoorMask, direction);
         }
@@ -95,7 +95,7 @@ namespace ProjectVoid.Map
         /// <summary>
         /// 활성화된 모든 문 방향을 반환합니다.
         /// </summary>
-        public EDirection[] GetDoorDirections()
+        public Direction[] GetDoorDirections()
         {
             return DirectionExtensions.GetActiveDirections(DoorMask);
         }

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
@@ -19,6 +19,7 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
     #region Static Map (Multi-Peer Support)
 
     private static Dictionary<NetworkRunner, NetworkManager> _runnerToManagerMap = new Dictionary<NetworkRunner, NetworkManager>();
+    private NetworkRunner _callbacksRunner;
 
     /// <summary>
     /// 특정 NetworkRunner에 해당하는 NetworkManager 인스턴스를 반환합니다.
@@ -50,7 +51,7 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
     public NetworkRunner Runner { get; private set; }
     public int MaxPlayers => _currentConnectionInfo?.MaxPlayers ?? 0;
     public string SessionName => _currentConnectionInfo?.SessionName ?? string.Empty;
-    public EGameMode? CurrentGameMode => _currentConnectionInfo?.GameMode;
+    public GameMode? CurrentGameMode => _currentConnectionInfo?.GameMode;
 
     /// <summary>
     /// 현재 세션의 GameStateManager
@@ -61,6 +62,7 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
     /// 현재 세션의 NetworkMapManager
     /// </summary>
     public NetworkMapManager NetworkMapManager => _networkMapManager;
+    public bool HasSpawnedMapManager => _mapManagerSpawned && _networkMapManager != null && _networkMapManager.Object != null && _networkMapManager.Object.IsValid;
 
     #endregion
 
@@ -75,12 +77,19 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
     
     private bool _mapManagerSpawned = false;
     private bool _gameStateManagerSpawned = false;
+    private bool _spawningManagersInProgress = false; // Why: 중복 스폰 방지용 플래그
+    private bool _isGameStarted = false; // Why: GameStateManager가 null이어도 게임이 시작되었음을 기억 (입력 허용)
 
     private GameConnectionInfo? _currentConnectionInfo;
     private string _lobbySceneName = "Lobby";
 
     private List<PlayerRef> _pendingPlayerSpawns = new List<PlayerRef>();
     private bool _isWaitingForGameStart = false;
+    
+    // Why: GamePlay 씬 전환 후 맵 초기화를 위해 저장 (NetworkManager는 DontDestroyOnLoad)
+    private GameMode _pendingGameMode;
+    private int _pendingPlayerCount;
+    private bool _hasPendingMapInit = false;
 
     #endregion
 
@@ -96,6 +105,13 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
         if (Runner != null)
         {
             _runnerToManagerMap.Remove(Runner);
+            ServiceLocator.Clear(Runner);
+        }
+
+        if (_callbacksRunner != null)
+        {
+            _callbacksRunner.RemoveCallbacks(this);
+            _callbacksRunner = null;
         }
     }
 
@@ -105,16 +121,85 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
 
     public void SetRunner(NetworkRunner runner)
     {
-        if (Runner != null)
+        bool sameRunner = _callbacksRunner == runner;
+
+        if (_callbacksRunner != null && _callbacksRunner != runner)
+        {
+            _callbacksRunner.RemoveCallbacks(this);
+            _callbacksRunner = null;
+        }
+
+        if (Runner != null && Runner != runner)
         {
             _runnerToManagerMap.Remove(Runner);
+            ServiceLocator.Clear(Runner);
         }
 
         Runner = runner;
+        _callbacksRunner = runner;
         
         if (runner != null)
         {
             _runnerToManagerMap[runner] = this;
+            ServiceLocator.Register(runner, this);
+
+            if (!sameRunner)
+            {
+                runner.AddCallbacks(this);
+                // Why: ObjectProvider는 StartGameArgs에서 설정하므로 여기서는 불필요
+            }
+
+            _callbacksRunner = runner;
+        }
+        else
+        {
+            _callbacksRunner = null;
+        }
+    }
+
+    /// <summary>
+    /// Lobby에서 이미 연결된 Runner를 전달받아 사용합니다.
+    /// </summary>
+    public void SetExistingRunner(NetworkRunner runner)
+    {
+        Debug.Log($"[NetworkManager] SetExistingRunner called - Runner: {runner?.SessionInfo.Name}");
+
+        // Why: 이미 같은 Runner가 설정되어 있으면 중복 스폰 방지
+        if (Runner == runner && runner != null)
+        {
+            Debug.Log("[NetworkManager] Same runner already set, skipping duplicate initialization");
+            return;
+        }
+
+        SetRunner(runner);
+        
+        if (runner != null && runner.IsRunning)
+        {
+            // Why: 연결 정보 저장
+            _currentConnectionInfo = new GameConnectionInfo
+            {
+                SessionName = runner.SessionInfo.Name,
+                GameMode = MatchmakingManager.Instance?.CurrentGameMode ?? GameMode.None,
+                MaxPlayers = runner.SessionInfo.MaxPlayers
+            };
+
+            // Why: 로딩 패널은 GamePlay 씬 전환 시 MatchmakingManager에서 표시됨
+            // (SetExistingRunner는 세션 진입 시점이므로 여기서 로딩 패널을 켜지 않음)
+
+            // Why: 클라이언트: 게임 모드 정보 전송
+            if (runner.IsClient)
+            {
+                var gameMode = MatchmakingManager.Instance?.CurrentGameMode ?? GameMode.None;
+                var targetPlayers = MatchmakingManager.Instance?.MaxPlayers ?? 4;
+                StartCoroutine(WaitForGameStateManagerAndSendGameMode(gameMode, targetPlayers));
+            }
+            // Why: 서버: 세션 매니저 스폰
+            else if (runner.IsServer)
+            {
+                _ = EnsureSessionManagersAsync();
+            }
+
+            Debug.Log("[NetworkManager] SetExistingRunner - 초기화 완료");
         }
     }
 
@@ -135,6 +220,12 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
 
         if (Runner != null)
         {
+            if (_callbacksRunner != null)
+            {
+                _callbacksRunner.RemoveCallbacks(this);
+                _callbacksRunner = null;
+            }
+
             _runnerToManagerMap.Remove(Runner);
             await Runner.Shutdown();
             Destroy(Runner);
@@ -142,12 +233,12 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
         }
 
         Runner = gameObject.AddComponent<NetworkRunner>();
-        _runnerToManagerMap[Runner] = this; // 등록
+        SetRunner(Runner);
         Runner.ProvideInput = true;
 
         var result = await Runner.StartGame(new StartGameArgs()
         {
-            GameMode = GameMode.Server,
+            GameMode = Fusion.GameMode.Server,
             SessionName = connectionInfo.SessionName,
             Scene = SceneRef.FromIndex(SceneManager.GetActiveScene().buildIndex),
             SceneManager = gameObject.AddComponent<NetworkSceneManagerDefault>(),
@@ -160,6 +251,11 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
             }
         });
 
+        if (result.Ok && Runner.IsServer)
+        {
+            await SpawnGameObjectsAsync(Runner);
+        }
+
         return result.Ok;
     }
 
@@ -169,6 +265,12 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
 
         if (Runner != null)
         {
+            if (_callbacksRunner != null)
+            {
+                _callbacksRunner.RemoveCallbacks(this);
+                _callbacksRunner = null;
+            }
+
             _runnerToManagerMap.Remove(Runner);
             await Runner.Shutdown();
             Destroy(Runner);
@@ -176,15 +278,16 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
         }
 
         Runner = gameObject.AddComponent<NetworkRunner>();
-        _runnerToManagerMap[Runner] = this; // 등록
+        SetRunner(Runner);
         Runner.ProvideInput = true;
 
         // Why: SceneManager를 설정하지 않으면 씬 동기화가 일어나지 않음
         // 클라이언트는 LobbyScene에 머물면서 서버의 NetworkObject만 동기화
         var startArgs = new StartGameArgs()
         {
-            GameMode = GameMode.Client,
+            GameMode = Fusion.GameMode.Client,
             SessionName = connectionInfo.SessionName,
+            // ObjectProvider 제거 - Fusion 기본 방식 사용 (직접 파괴)
             // SceneManager 제거 - 씬 동기화 비활성화
         };
 
@@ -198,7 +301,14 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
         if (Runner != null && Runner.IsRunning)
         {
             _runnerToManagerMap.Remove(Runner);
+            ServiceLocator.Clear(Runner);
             await Runner.Shutdown();
+        }
+
+        if (_callbacksRunner != null)
+        {
+            _callbacksRunner.RemoveCallbacks(this);
+            _callbacksRunner = null;
         }
 
         if (Runner != null)
@@ -216,6 +326,7 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
         _networkMapManager = null;
         _currentConnectionInfo = null;
         _isWaitingForGameStart = false;
+        ServiceLocator.ClearAll();
 
         SceneManager.LoadScene(_lobbySceneName);
     }
@@ -233,7 +344,7 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
     {
         if (runner.IsServer)
         {
-            if (runner.GameMode == GameMode.Server && player == runner.LocalPlayer)
+            if (runner.GameMode == Fusion.GameMode.Server && player == runner.LocalPlayer)
             {
                 return;
             }
@@ -243,7 +354,7 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
 
             if (_spawnedPlayers.Count == 0 && _pendingPlayerSpawns.Count == 0)
             {
-                SpawnGameObjects(runner);
+                _ = SpawnGameObjectsAsync(runner);
             }
 
             // Why: GameStateManager에 플레이어 조인 알림 (게임 시작 조건 체크)
@@ -387,11 +498,23 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
 
     public void OnPlayerLeft(NetworkRunner runner, PlayerRef player)
     {
-        Debug.Log($"[NetworkManager] OnPlayerLeft - Player {player.PlayerId}");
+        Debug.Log($"[NetworkManager] OnPlayerLeft - Player {player.PlayerId} | IsServer: {runner.IsServer}");
+        
+        // Debug: 현재 _spawnedPlayers 상태 출력
+        Debug.Log($"[NetworkManager] Current _spawnedPlayers count: {_spawnedPlayers.Count}");
+        foreach (var kvp in _spawnedPlayers)
+        {
+            var netObj = kvp.Value;
+            string objName = netObj != null ? netObj.name : "NULL";
+            int inputAuth = netObj != null && netObj.InputAuthority != PlayerRef.None ? netObj.InputAuthority.PlayerId : -1;
+            Debug.Log($"[NetworkManager] - PlayerRef {kvp.Key.PlayerId} -> {objName} (InputAuth: {inputAuth})");
+        }
 
         // 1. 이미 스폰된 플레이어인 경우
         if (_spawnedPlayers.TryGetValue(player, out NetworkObject networkObject))
         {
+            Debug.Log($"[NetworkManager] Found player in _spawnedPlayers - NetworkObject: {networkObject?.name}, InputAuthority: {networkObject?.InputAuthority.PlayerId}");
+            
             bool wasAlive = true;
             if (networkObject != null && networkObject.TryGetComponent<PlayerCombat>(out var combat))
             {
@@ -400,12 +523,20 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
 
             if (runner.IsServer && _gameStateManager != null)
             {
-                Debug.Log($"[NetworkManager] Spawned player left - calling OnPlayerLeft() | WasAlive: {wasAlive}");
                 _gameStateManager.OnPlayerLeft(wasAlive);
             }
 
-            runner.Despawn(networkObject);
             _spawnedPlayers.Remove(player);
+            
+            // Why: Runner.Despawn이 시뮬레이션을 멈추는 버그가 있음
+            // 대신 GameObject를 비활성화하여 시뮬레이션에서 제외
+            // 비활성화된 오브젝트는 세션 종료 시 자동으로 정리됨
+            if (networkObject != null && runner.IsServer)
+            {
+                Debug.Log($"[NetworkManager] Deactivating player object: {networkObject.name}");
+                networkObject.gameObject.SetActive(false);
+                _deactivatedPlayers.Add(networkObject);
+            }
         }
         // 2. 스폰 대기 중인 플레이어인 경우 (맵 생성 중 나간 경우)
         else if (_pendingPlayerSpawns.Contains(player))
@@ -427,18 +558,24 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
         }
     }
 
+    // Why: 비활성화된 플레이어 오브젝트 목록 - 세션 종료 시 정리
+    private readonly List<NetworkObject> _deactivatedPlayers = new();
+
     #endregion
 
     #region INetworkRunnerCallbacks - Input
 
     public void OnInput(NetworkRunner runner, NetworkInput input)
     {
-        // 매치메이킹 패널이 열려있고 아직 게임이 시작되지 않았다면 입력 차단 (로비/대기 상태)
-        if (UIManager.Instance != null && UIManager.Instance.IsMatchmakingPanelActive)
+        // Why: 게임이 시작되지 않았다면 입력 차단 (매칭/대기 상태)
+        if (!_isGameStarted)
         {
-            var gs = GameStateManager.Instance;
-            bool gameStarted = gs != null && gs.IsGameStarted;
-            if (!gameStarted)
+            var gs = _gameStateManager ?? GameStateManager.Instance;
+            if (gs != null && gs.IsGameStarted)
+            {
+                _isGameStarted = true;
+            }
+            else
             {
                 return;
             }
@@ -446,43 +583,42 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
 
         if (_cachedInputHandler != null)
         {
-            var netObj = _cachedInputHandler.GetComponent<NetworkObject>();
-            // Why: 캐시가 다른 플레이어를 가리키거나 소유권을 잃었으면 무효화
-            if (netObj == null || !netObj.HasInputAuthority)
+            if (_cachedInputHandler == null || _cachedInputHandler.gameObject == null)
             {
                 _cachedInputHandler = null;
             }
             else
             {
-                // Why: 로컬 플레이어가 죽었으면 해당 클라이언트만 입력을 멈춤
-                var combat = _cachedInputHandler.GetComponent<PlayerCombat>();
-                if (combat != null && !combat.IsAlive)
+                var netObj = _cachedInputHandler.GetComponent<NetworkObject>();
+                if (netObj == null || !netObj.HasInputAuthority)
                 {
+                    _cachedInputHandler = null;
+                }
+                else
+                {
+                    var combat = _cachedInputHandler.GetComponent<PlayerCombat>();
+                    if (combat != null && !combat.IsAlive) return;
+
+                    input.Set(_cachedInputHandler.GetCurrentInput());
                     return;
                 }
-
-                NetworkInputData data = _cachedInputHandler.GetCurrentInput();
-                input.Set(data);
-                return;
             }
         }
 
         var allInputHandlers = FindObjectsByType<PlayerInputHandler>(FindObjectsSortMode.None);
+        
         foreach (var inputHandler in allInputHandlers)
         {
+            if (inputHandler == null || inputHandler.gameObject == null) continue;
+            
             NetworkObject netObj = inputHandler.GetComponent<NetworkObject>();
             if (netObj != null && netObj.HasInputAuthority)
             {
                 var combat = inputHandler.GetComponent<PlayerCombat>();
-                // Why: 로컬 플레이어가 죽었으면 입력을 멈추지만 다른 클라이언트에는 영향 없음
-                if (combat != null && !combat.IsAlive)
-                {
-                    return;
-                }
+                if (combat != null && !combat.IsAlive) return;
 
                 _cachedInputHandler = inputHandler;
-                NetworkInputData data = inputHandler.GetCurrentInput();
-                input.Set(data);
+                input.Set(inputHandler.GetCurrentInput());
                 return;
             }
         }
@@ -499,7 +635,7 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
         // Why: 클라이언트가 서버에 연결되었을 때, 게임 모드 정보를 서버에 전달
         if (!runner.IsServer && _currentConnectionInfo.HasValue)
         {
-            EGameMode gameMode = _currentConnectionInfo.Value.GameMode;
+            GameMode gameMode = _currentConnectionInfo.Value.GameMode;
             int targetPlayers = _currentConnectionInfo.Value.MaxPlayers;
 
             Debug.Log($"[NetworkManager] Connected to server. Waiting for GameStateManager to send game mode info - GameMode: {gameMode}, TargetPlayers: {targetPlayers}");
@@ -509,7 +645,7 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
         }
     }
 
-    private IEnumerator WaitForGameStateManagerAndSendGameMode(EGameMode gameMode, int targetPlayers)
+    private IEnumerator WaitForGameStateManagerAndSendGameMode(GameMode gameMode, int targetPlayers)
     {
         float waitTime = 0f;
         float maxWaitTime = 10f;
@@ -557,63 +693,175 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
 
     public void OnSceneLoadDone(NetworkRunner runner)
     {
+        string sceneName = UnityEngine.SceneManagement.SceneManager.GetActiveScene().name;
+        Debug.Log($"[NetworkManager] OnSceneLoadDone - Scene: {sceneName}, IsServer: {runner.IsServer}");
+        
+        // 서버 전용: 매니저 스폰 및 맵 초기화
         if (!runner.IsServer) return;
-        // 씬 로드 완료 시 처리가 필요하다면 여기 추가
+        
+        Debug.Log($"[NetworkManager] OnSceneLoadDone (Server) - HasPendingMapInit: {_hasPendingMapInit}");
+        
+        // Why: 씬 로드 완료 시 매니저들 생성 후 맵 초기화 실행
+        _ = EnsureSessionManagersAndInitMapAsync();
+    }
+    
+    /// <summary>
+    /// 게임 모드 정보를 저장합니다 (GameStateManager에서 호출).
+    /// </summary>
+    public void SetPendingMapInit(GameMode gameMode, int playerCount)
+    {
+        _pendingGameMode = gameMode;
+        _pendingPlayerCount = playerCount;
+        _hasPendingMapInit = true;
+        Debug.Log($"[NetworkManager] Pending map init set: Mode={gameMode}, Players={playerCount}");
+    }
+    
+    /// <summary>
+    /// 저장된 게임 모드 정보로 맵을 초기화합니다.
+    /// </summary>
+    private void InitializePendingMap()
+    {
+        if (!_hasPendingMapInit)
+        {
+            Debug.Log("[NetworkManager] InitializePendingMap - No pending map init");
+            return;
+        }
+        
+        if (_networkMapManager != null && !_networkMapManager.IsReady())
+        {
+            Debug.Log($"[NetworkManager] Initializing map: Mode={_pendingGameMode}, Players={_pendingPlayerCount}");
+            _networkMapManager.InitializeMap(_pendingGameMode, _pendingPlayerCount);
+            _hasPendingMapInit = false;
+        }
+        else
+        {
+            Debug.LogWarning($"[NetworkManager] Cannot init map - MapManager null: {_networkMapManager == null}, Ready: {_networkMapManager?.IsReady()}");
+        }
     }
 
-    private void SpawnGameObjects(NetworkRunner runner)
+    /// <summary>
+    /// 서버에서 필요한 세션 매니저(게임 상태, 맵)를 보장 생성합니다.
+    /// </summary>
+    public void EnsureSessionManagers()
+    {
+        _ = EnsureSessionManagersAsync();
+    }
+    
+    /// <summary>
+    /// 매니저 생성 후 맵 초기화까지 수행하는 통합 메서드
+    /// </summary>
+    private async Task EnsureSessionManagersAndInitMapAsync()
+    {
+        if (Runner == null || !Runner.IsServer) return;
+        
+        await SpawnGameObjectsAsync(Runner);
+        
+        // Why: 매니저 생성 완료 후 대기 중인 맵 초기화 실행
+        if (_hasPendingMapInit)
+        {
+            Debug.Log("[NetworkManager] Managers spawned, now initializing pending map...");
+            InitializePendingMap();
+        }
+    }
+
+    public async Task EnsureSessionManagersAsync()
+    {
+        if (Runner == null || !Runner.IsServer) return;
+        Debug.Log($"[NetworkManager] EnsureSessionManagers called | RunnerValid: {Runner != null}, IsServer: {Runner.IsServer}");
+        await SpawnGameObjectsAsync(Runner);
+    }
+
+    private async Task SpawnGameObjectsAsync(NetworkRunner runner)
     {
         if (!runner.IsServer) return;
-
-        // GameStateManager 스폰
-        if (!_gameStateManagerSpawned)
+        
+        // Why: 이미 스폰 진행 중이면 중복 스폰 방지
+        if (_spawningManagersInProgress)
         {
-            if (_gameStateManagerPrefab.IsValid)
+            Debug.LogWarning("[NetworkManager] SpawnGameObjects already in progress, skipping duplicate call");
+            return;
+        }
+        
+        // Why: 이미 스폰 완료되었으면 스킵
+        if (_gameStateManager != null && _networkMapManager != null)
+        {
+            Debug.Log("[NetworkManager] Managers already spawned, skipping");
+            return;
+        }
+        
+        _spawningManagersInProgress = true;
+        Debug.Log($"[NetworkManager] SpawnGameObjects - Runner: {runner.name}, Scene: {UnityEngine.SceneManagement.SceneManager.GetActiveScene().name}");
+        
+        try
+        {
+            // GameStateManager 스폰
+            // Why: _gameStateManagerSpawned 플래그만 믿지 말고 실제 객체가 유효한지 확인 (씬 전환 시 파괴되었을 수 있음)
+            if (_gameStateManager == null)
             {
-                try 
+                if (_gameStateManagerPrefab.IsValid)
                 {
-                    NetworkObject gameStateManagerObj = runner.Spawn(_gameStateManagerPrefab, Vector3.zero, Quaternion.identity);
-                    if (gameStateManagerObj != null)
+                    try 
                     {
-                        _gameStateManagerSpawned = true;
-                        _gameStateManager = gameStateManagerObj.GetComponent<GameStateManager>();
-
-                        // Why: TargetPlayerCount는 클라이언트가 RPC로 전달하므로 여기서는 초기화만
-                        // 서버는 첫 번째 클라이언트의 RPC_SetGameModeInfo를 통해 TargetPlayerCount를 받음
-                        if (_gameStateManager != null)
+                        NetworkObject gameStateManagerObj = await runner.SpawnAsync(_gameStateManagerPrefab, Vector3.zero, Quaternion.identity, null, null);
+                        if (gameStateManagerObj != null)
                         {
-                            _gameStateManager.TargetPlayerCount = 0; // RPC 대기 중
-                            Debug.Log("[NetworkManager] GameStateManager spawned. Waiting for client to send game mode info via RPC...");
+                            // Why: NetworkObject는 Runner에 종속되므로 DontDestroyOnLoad 불필요
+                            
+                            _gameStateManagerSpawned = true;
+                            _gameStateManager = gameStateManagerObj.GetComponent<GameStateManager>();
+                            Debug.Log($"[NetworkManager] GameStateManager spawned. ObjectValid: {gameStateManagerObj != null}, InstanceNull: {_gameStateManager == null}");
+
+                            // Why: TargetPlayerCount는 GameStateManager가 Session Properties에서 직접 복원함
+                            if (_gameStateManager != null)
+                            {
+                                Debug.Log("[NetworkManager] GameStateManager spawned. State will be restored from Session Properties.");
+                                ServiceLocator.Register(runner, _gameStateManager);
+                            }
                         }
                     }
+                    catch (System.Exception ex) { Debug.LogError($"[NetworkManager] Failed to spawn GameStateManager: {ex.Message}"); }
                 }
-                catch (System.Exception ex) { Debug.LogError($"[NetworkManager] Failed to spawn GameStateManager: {ex.Message}"); }
+                else
+                {
+                    Debug.LogError("[NetworkManager] _gameStateManagerPrefab is not assigned. GameStateManager will not spawn.");
+                }
+            }
+
+            // NetworkMapManager 스폰
+            if (_networkMapManager == null)
+            {
+                if (_mapManagerPrefab.IsValid)
+                {
+                    try
+                    {
+                        NetworkObject mapManagerObj = await runner.SpawnAsync(_mapManagerPrefab, Vector3.zero, Quaternion.identity, null, null);
+                        if (mapManagerObj != null)
+                        {
+                            // Why: NetworkObject는 Runner에 종속되므로 DontDestroyOnLoad 불필요
+
+                            _mapManagerSpawned = true;
+                            _networkMapManager = mapManagerObj.GetComponent<NetworkMapManager>();
+                            Debug.Log($"[NetworkManager] NetworkMapManager spawned. InstanceNull: {_networkMapManager == null}");
+
+                            // Why: 맵 초기화는 RPC를 통해 게임 모드 정보를 받은 후에 수행
+                            if (_networkMapManager != null)
+                            {
+                                Debug.Log("[NetworkManager] NetworkMapManager spawned. Will initialize after receiving game mode info via RPC...");
+                                ServiceLocator.Register(runner, _networkMapManager);
+                            }
+                        }
+                    }
+                    catch (System.Exception) { }
+                }
+                else
+                {
+                    Debug.LogError("[NetworkManager] _mapManagerPrefab is not assigned. NetworkMapManager will not spawn.");
+                }
             }
         }
-
-        // NetworkMapManager 스폰
-        if (!_mapManagerSpawned)
+        finally
         {
-            if (_mapManagerPrefab.IsValid)
-            {
-                try
-                {
-                    NetworkObject mapManagerObj = runner.Spawn(_mapManagerPrefab, Vector3.zero, Quaternion.identity);
-                    if (mapManagerObj != null)
-                    {
-                        _mapManagerSpawned = true;
-                        _networkMapManager = mapManagerObj.GetComponent<NetworkMapManager>();
-
-                        // Why: 맵 초기화는 RPC를 통해 게임 모드 정보를 받은 후에 수행
-                        // 일단 기본값(8인)으로 초기화하고, RPC에서 재초기화
-                        if (_networkMapManager != null)
-                        {
-                            Debug.Log("[NetworkManager] NetworkMapManager spawned. Will initialize after receiving game mode info via RPC...");
-                        }
-                    }
-                }
-                catch (System.Exception) { }
-            }
+            _spawningManagersInProgress = false;
         }
     }
 

@@ -1,5 +1,6 @@
-using Fusion;
+﻿using Fusion;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using ProjectVoid.Map;
 
 namespace ProjectVoid.Network
@@ -42,6 +43,8 @@ namespace ProjectVoid.Network
         private NavMeshBaker _spawnedNavMeshBaker;
         private GameObject _groundObject; // 바닥 충돌용 Ground 오브젝트
         private MapLayoutTemplate _selectedTemplate; // 선택된 맵 템플릿
+        private GameMode _currentGameMode; // Why: 맵 생성 시 필요한 게임 모드 정보
+        private int _currentPlayerCount; // Why: 맵 생성 시 필요한 플레이어 수 정보
 
         /// <summary>
         /// 맵 생성기 인스턴스를 반환합니다.
@@ -49,16 +52,24 @@ namespace ProjectVoid.Network
         /// </summary>
         public MapGenerator MapGenerator => _mapGenerator;
 
+        #region Fusion Lifecycle
+
         public override void Spawned()
         {
+            // Why: NetworkObject를 씬 전환 시에도 유지하려면 Runner.MakeDontDestroyOnLoad 사용
+            // Why: 서버에서만 호출 - 클라이언트에서는 assertion 경고가 발생할 수 있음
             if (HasStateAuthority)
             {
+                Runner.MakeDontDestroyOnLoad(gameObject);
+                
                 // Why: 서버에서 각종 Manager 프리팩을 네트워크 스폰
                 SpawnLootBoxManager();
                 SpawnOxygenDepletionManager();
                 SpawnNavMeshBaker();
                 SpawnMobSpawnManager();
-                GenerateMapOnServer();
+                // Why: 맵 생성은 클라이언트가 접속해서 RPC로 게임 모드 정보를 보낼 때만 수행
+                // InitializeMap()이 호출되면 그때 GenerateMapOnServer() 실행
+                Debug.Log("[NetworkMapManager] Managers spawned. Waiting for game mode info to generate map...");
             }
             else if (IsMapReady && ChunkCount > 0)
             {
@@ -67,6 +78,8 @@ namespace ProjectVoid.Network
             }
             // 동시 접속자는 RPC_NotifyMapReady()를 받을 때까지 대기
         }
+
+        #endregion
 
         private void SpawnLootBoxManager()
         {
@@ -206,8 +219,10 @@ namespace ProjectVoid.Network
         /// </summary>
         /// <param name="mode">게임 모드</param>
         /// <param name="playerCount">플레이어 수</param>
-        public void InitializeMap(EGameMode mode, int playerCount)
+        public void InitializeMap(GameMode mode, int playerCount)
         {
+            Debug.Log($"[NetworkMapManager] InitializeMap called - Mode: {mode}, Players: {playerCount}, HasStateAuthority: {HasStateAuthority}");
+
             if (!HasStateAuthority)
             {
                 Debug.LogWarning("[NetworkMapManager] InitializeMap은 서버에서만 호출할 수 있습니다.");
@@ -219,6 +234,16 @@ namespace ProjectVoid.Network
                 Debug.LogError("[NetworkMapManager] MapGenerationSettings가 설정되지 않았습니다!");
                 return;
             }
+
+            if (IsReady())
+            {
+                Debug.LogWarning($"[NetworkMapManager] Map already initialized! IsMapReady: {IsMapReady}, HasGeneratedMap: {_hasGeneratedMap}");
+                return;
+            }
+
+            // Why: 게임 모드와 플레이어 수 저장 (맵 풀링용)
+            _currentGameMode = mode;
+            _currentPlayerCount = playerCount;
 
             // 모드에 맞는 템플릿 리스트 가져오기
             MapLayoutTemplate[] templates = _mapSettings.GetTemplatesForMode(mode, playerCount);
@@ -249,9 +274,12 @@ namespace ProjectVoid.Network
             }
 
             MapSeed = _mapSettings.GenerateSeed();
-            _mapGenerator = new MapGenerator(_mapSettings, this.transform);
 
-            if (!_mapGenerator.GenerateMap(MapSeed, _selectedTemplate)) // Pass _selectedTemplate here
+            // Why: 매 게임마다 새 맵 생성 (MapPool 제거됨)
+            Debug.Log($"[NetworkMapManager] Creating new map | Seed: {MapSeed}");
+            _mapGenerator = new MapGenerator(_mapSettings, this.transform, HasStateAuthority);
+
+            if (!_mapGenerator.GenerateMap(MapSeed, _selectedTemplate))
             {
                 Debug.LogError("[Server] 맵 생성 실패!");
                 return;
@@ -381,7 +409,7 @@ namespace ProjectVoid.Network
 
             Debug.Log($"[Client] 맵 렌더링 시작: Seed={MapSeed}, ChunkCount={ChunkCount}, WallSegmentCount={WallSegmentCount}");
 
-            _mapGenerator = new MapGenerator(_mapSettings, this.transform);
+            _mapGenerator = new MapGenerator(_mapSettings, this.transform, HasStateAuthority);
 
             // 서버에서 보낸 벽 구간 정보 기반으로 렌더링
             if (!_mapGenerator.RenderMapFromNetworkData(networkChunks, wallSegments, MapSeed))
@@ -404,6 +432,10 @@ namespace ProjectVoid.Network
             // Why: 클라이언트에서도 Ground 오브젝트 생성 (바닥 충돌용)
             CreateGroundObject();
             Debug.Log("[Client] Ground 오브젝트 생성 완료");
+
+            // Why: 클라이언트에서도 맵 준비 완료 플래그 설정
+            IsMapReady = true;
+            Debug.Log("[Client] 맵 준비 완료 - IsMapReady = true");
 
             // Why: 클라이언트에서는 NavMesh 베이킹 불필요 (몹 AI는 서버에서만 실행)
         }
@@ -428,12 +460,18 @@ namespace ProjectVoid.Network
 
             float groundWidth = mapWidth + padding * 2;
             float groundDepth = mapHeight + padding * 2;
-            Vector3 groundPosition = new Vector3(0f, 0.5f, 0f); // Y = 0.5 (바닥보다 살짝 위)
+
+            // Why: 맵의 실제 중심 위치 계산 (청크들의 중심)
+            Vector3 mapCenter = _mapGenerator.GetMapCenter();
+            Vector3 groundPosition = new Vector3(mapCenter.x, 0.5f, mapCenter.z); // Y = 0.5 (바닥보다 살짝 위)
 
             // Why: Ground GameObject 생성
             _groundObject = new GameObject("Ground");
             _groundObject.transform.position = groundPosition;
             _groundObject.layer = LayerMask.NameToLayer("Ground"); // Ground 레이어 설정 (있다면)
+
+            // Why: Multi-Peer 환경에서 Ground를 Runner의 씬으로 이동하여 Physics 충돌 보장
+            MoveToRunnerScene(_groundObject);
 
             // Why: BoxCollider 추가 (플레이어 충돌용)
             BoxCollider groundCollider = _groundObject.AddComponent<BoxCollider>();
@@ -441,6 +479,18 @@ namespace ProjectVoid.Network
             groundCollider.center = Vector3.zero;
 
             Debug.Log($"[NetworkMapManager] Ground 생성: Size=({groundWidth}, 0.1, {groundDepth}), Position={groundPosition}");
+        }
+
+        /// <summary>
+        /// Multi-Peer 환경에서 GameObject를 Runner의 씬으로 이동합니다.
+        /// </summary>
+        private void MoveToRunnerScene(GameObject obj)
+        {
+            if (obj == null) return;
+            if (Runner == null || !Runner.SimulationUnityScene.IsValid()) return;
+
+            SceneManager.MoveGameObjectToScene(obj, Runner.SimulationUnityScene);
+            Debug.Log($"[NetworkMapManager] '{obj.name}'을 Runner 씬으로 이동 완료");
         }
 
         public bool IsReady()
@@ -601,7 +651,7 @@ namespace ProjectVoid.Network
             // Y(Z): North(+), South(-)
 
             // 우선순위: North > East > South > West (일반적인 진입 방향)
-            EDirection[] priorityOrder = { EDirection.North, EDirection.East, EDirection.South, EDirection.West };
+            Direction[] priorityOrder = { Direction.North, Direction.East, Direction.South, Direction.West };
 
             foreach (var direction in priorityOrder)
             {
@@ -609,10 +659,10 @@ namespace ProjectVoid.Network
                 {
                     return direction switch
                     {
-                        EDirection.North => new Vector2(0, -offsetDistance),  // 북쪽 문 → 청크 안쪽(남쪽)으로
-                        EDirection.South => new Vector2(0, offsetDistance),   // 남쪽 문 → 청크 안쪽(북쪽)으로
-                        EDirection.East => new Vector2(-offsetDistance, 0),   // 동쪽 문 → 청크 안쪽(서쪽)으로
-                        EDirection.West => new Vector2(offsetDistance, 0),    // 서쪽 문 → 청크 안쪽(동쪽)으로
+                        Direction.North => new Vector2(0, -offsetDistance),  // 북쪽 문 → 청크 안쪽(남쪽)으로
+                        Direction.South => new Vector2(0, offsetDistance),   // 남쪽 문 → 청크 안쪽(북쪽)으로
+                        Direction.East => new Vector2(-offsetDistance, 0),   // 동쪽 문 → 청크 안쪽(서쪽)으로
+                        Direction.West => new Vector2(offsetDistance, 0),    // 서쪽 문 → 청크 안쪽(동쪽)으로
                         _ => Vector2.zero
                     };
                 }
@@ -695,7 +745,7 @@ namespace ProjectVoid.Network
             }
 
             // 우선순위: North > East > South > West
-            EDirection[] priorityOrder = { EDirection.North, EDirection.East, EDirection.South, EDirection.West };
+            Direction[] priorityOrder = { Direction.North, Direction.East, Direction.South, Direction.West };
             
             foreach (var direction in priorityOrder)
             {
@@ -704,10 +754,10 @@ namespace ProjectVoid.Network
                     // 문 방향을 바라보도록 회전
                     return direction switch
                     {
-                        EDirection.North => 0f,     // 북쪽 문 → 북쪽(0도) 바라봄
-                        EDirection.South => 180f,   // 남쪽 문 → 남쪽(180도) 바라봄
-                        EDirection.East => 90f,     // 동쪽 문 → 동쪽(90도) 바라봄
-                        EDirection.West => 270f,    // 서쪽 문 → 서쪽(270도) 바라봄
+                        Direction.North => 0f,     // 북쪽 문 → 북쪽(0도) 바라봄
+                        Direction.South => 180f,   // 남쪽 문 → 남쪽(180도) 바라봄
+                        Direction.East => 90f,     // 동쪽 문 → 동쪽(90도) 바라봄
+                        Direction.West => 270f,    // 서쪽 문 → 서쪽(270도) 바라봄
                         _ => 0f
                     };
                 }

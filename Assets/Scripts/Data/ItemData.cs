@@ -1,9 +1,9 @@
-using UnityEngine;
+﻿using UnityEngine;
 
 /// <summary>
 /// 아이템 타입 열거형
 /// </summary>
-public enum EItemType
+public enum ItemType
 {
     None,
     Weapon,
@@ -35,7 +35,7 @@ public abstract class ItemData : ScriptableObject
     [SerializeField] private GameObject _modelPrefab;
 
     [Tooltip("아이템 타입")]
-    [SerializeField] private EItemType _itemType;
+    [SerializeField] private ItemType _itemType;
 
     [Header("드랍 효과")]
     [Tooltip("드랍 시 생성될 이펙트 (옵션)")]
@@ -73,7 +73,7 @@ public abstract class ItemData : ScriptableObject
     /// <summary>
     /// 아이템 타입을 반환합니다.
     /// </summary>
-    public EItemType ItemType => _itemType;
+    public ItemType ItemType => _itemType;
 
     /// <summary>
     /// 드랍 이펙트 프리팹을 반환합니다.

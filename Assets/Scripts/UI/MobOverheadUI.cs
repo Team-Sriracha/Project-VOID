@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
 
@@ -173,15 +173,40 @@ public class MobOverheadUI : MonoBehaviour
             if (_mainCamera == null) return;
         }
 
-        Vector3 worldPosition = _targetMob.position + Vector3.up * _headOffset;
-        Vector3 screenPosition = _mainCamera.WorldToScreenPoint(worldPosition);
+        // Why: 먼저 캐릭터 위치만 스크린 좌표로 변환
+        Vector3 characterScreenPos = _mainCamera.WorldToScreenPoint(_targetMob.position);
 
         // Why: 카메라 뒤에 있으면 화면 밖으로 이동
-        if (screenPosition.z < 0)
+        if (characterScreenPos.z < 0)
         {
-            screenPosition.x = -1000;
-            screenPosition.y = -1000;
+            _rectTransform.position = new Vector3(-1000, -1000, 0);
+            return;
         }
+
+        // Why: 화면 경계 밖에 있으면 UI를 숨김 (갑자기 나타나는 현상 방지)
+        // 약간의 마진(-50 ~ Screen.width+50)을 두어 경계에서 부드럽게 처리
+        const float margin = 50f;
+        if (characterScreenPos.x < -margin || characterScreenPos.x > Screen.width + margin ||
+            characterScreenPos.y < -margin || characterScreenPos.y > Screen.height + margin)
+        {
+            _rectTransform.position = new Vector3(-1000, -1000, 0);
+            return;
+        }
+
+        // Why: 화면 중앙(0.5)을 기준으로 얼마나 떨어져 있는지 계산
+        float screenHeightRatio = characterScreenPos.y / Screen.height;
+        float screenWidthRatio = characterScreenPos.x / Screen.width;
+
+        // Why: 화면 아래쪽에 있을수록 Y 오프셋 증가, 위쪽에 있을수록 감소
+        float adjustedYOffset = _headOffset * (1f + (0.5f - screenHeightRatio) * 0.5f);
+        
+        // Why: 화면 좌측에 있으면 오른쪽으로 보정 (양의 X), 우측이면 왼쪽으로 보정 (음의 X)
+        // 카메라의 오른쪽 방향을 기준으로 월드 오프셋 적용
+        float xOffsetAmount = (0.5f - screenWidthRatio) * _headOffset * 0.5f;
+        Vector3 cameraRight = _mainCamera.transform.right;
+
+        Vector3 worldPosition = _targetMob.position + Vector3.up * adjustedYOffset + cameraRight * xOffsetAmount;
+        Vector3 screenPosition = _mainCamera.WorldToScreenPoint(worldPosition);
 
         _rectTransform.position = screenPosition;
     }

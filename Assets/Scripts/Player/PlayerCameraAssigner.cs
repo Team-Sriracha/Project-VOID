@@ -1,4 +1,4 @@
-using Unity.Cinemachine;
+﻿using Unity.Cinemachine;
 using Fusion;
 using UnityEngine;
 
@@ -20,6 +20,7 @@ public class PlayerCameraAssigner : NetworkBehaviour
 
     private CinemachineCamera _localCamera;
     private GameObject _cameraTarget;
+    private AudioListener _audioListener;
 
     #endregion
 
@@ -36,7 +37,24 @@ public class PlayerCameraAssigner : NetworkBehaviour
 
     public override void Despawned(NetworkRunner runner, bool hasState)
     {
-        DestroyCamera();
+        try
+        {
+            // Debug: 어떤 플레이어가 Despawn되는지 확인
+            var netObj = GetComponent<NetworkObject>();
+            int inputAuth = netObj != null && netObj.InputAuthority != PlayerRef.None ? netObj.InputAuthority.PlayerId : -1;
+            bool isLocal = netObj != null && netObj.HasInputAuthority;
+            Debug.LogWarning($"[PlayerCameraAssigner] Despawned called - InputAuthority: {inputAuth}, IsLocalPlayer: {isLocal}, hasState: {hasState}");
+            
+            // Why: 로컬 플레이어만 카메라가 있으므로, 카메라가 있을 때만 제거
+            if (_localCamera != null)
+            {
+                DestroyCamera();
+            }
+        }
+        catch (System.Exception ex)
+        {
+            Debug.LogError($"[PlayerCameraAssigner] Error in Despawned: {ex}");
+        }
     }
 
     #endregion
@@ -54,6 +72,10 @@ public class PlayerCameraAssigner : NetworkBehaviour
             return;
         }
 
+        // Why: 로컬 플레이어만 Audio Listener 필요
+        // 씬에 있는 기존 AudioListener 비활성화
+        DisableExistingAudioListeners();
+
         // Why: 즉시 추적 (UI와 비주얼이 자체 스무딩 처리)
         _cameraTarget = new GameObject($"CameraTarget_{Object.InputAuthority}");
         CameraTarget smoothTarget = _cameraTarget.AddComponent<CameraTarget>();
@@ -68,6 +90,9 @@ public class PlayerCameraAssigner : NetworkBehaviour
         // 이렇게 하면 네트워크 보간과 상관없이 항상 부드러움
         _localCamera.Target.TrackingTarget = _cameraTarget.transform;
         _localCamera.Target.LookAtTarget = _cameraTarget.transform;
+
+        // Why: 로컬 플레이어의 카메라에만 AudioListener 추가
+        _audioListener = _localCamera.gameObject.AddComponent<AudioListener>();
 
         Debug.Log($"[PlayerCameraAssigner] 로컬 플레이어 카메라 생성 완료: {_localCamera.name}");
     }
@@ -90,6 +115,19 @@ public class PlayerCameraAssigner : NetworkBehaviour
         }
 
         Debug.Log("[PlayerCameraAssigner] 로컬 플레이어 카메라 제거 완료");
+    }
+
+    /// <summary>
+    /// 씬에 있는 기존 AudioListener를 모두 비활성화합니다.
+    /// </summary>
+    private void DisableExistingAudioListeners()
+    {
+        var allListeners = FindObjectsByType<AudioListener>(FindObjectsSortMode.None);
+        foreach (var listener in allListeners)
+        {
+            listener.enabled = false;
+            Debug.Log($"[PlayerCameraAssigner] 기존 AudioListener 비활성화: {listener.gameObject.name}");
+        }
     }
 
     #endregion

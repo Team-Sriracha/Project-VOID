@@ -1,4 +1,4 @@
-using Fusion;
+﻿using Fusion;
 using UnityEngine;
 
 /// <summary>
@@ -172,9 +172,16 @@ public class NetworkedItem : NetworkBehaviour
             }
             else if (HasStateAuthority)
             {
-                // Why: 드랍 시 현재 위치를 기준점으로 설정
-                CurrentVelocity = Vector3.zero; // 속도 초기화
-                _hasLanded = false;
+                // Why: 플레이어가 드랍한 경우, 현재 위치에서 즉시 착지 처리
+                // (LootBox에서 스폰되어 튀어오르는 경우와 다름)
+                CurrentVelocity = Vector3.zero;
+                
+                // Why: 드랍 위치를 현재 transform 위치로 설정하고 즉시 착지
+                DroppedPosition = transform.position;
+                _hasLanded = true;
+                
+                // Why: 클라이언트에도 착지 위치 동기화
+                RPC_NotifyLanded(DroppedPosition);
 
                 // Why: Collider 활성화
                 if (_collider != null)
@@ -185,6 +192,8 @@ public class NetworkedItem : NetworkBehaviour
 
                 // Why: 드랍 이펙트 스폰
                 SpawnDropEffect();
+                
+                Debug.Log($"[NetworkedItem] 플레이어가 드랍함 - 위치: {DroppedPosition}");
             }
         }
 
@@ -381,8 +390,23 @@ public class NetworkedItem : NetworkBehaviour
     {
         hitPoint = position;
 
-        // Why: 아래쪽으로 Raycast
-        if (Physics.Raycast(position, Vector3.down, out RaycastHit hit, _groundCheckDistance + 0.5f))
+        // Why: Multi-Peer 환경에서 올바른 Physics 씬에서 Raycast 수행
+        RaycastHit hit;
+        bool hasHit = false;
+
+        if (Runner != null && Runner.SceneManager != null && 
+            Runner.SceneManager.TryGetPhysicsScene3D(out var physicsScene) && physicsScene.IsValid())
+        {
+            // Multi-Peer: 해당 Runner의 PhysicsScene에서 Raycast
+            hasHit = physicsScene.Raycast(position, Vector3.down, out hit, _groundCheckDistance + 0.5f);
+        }
+        else
+        {
+            // Fallback: 기본 Physics.Raycast (Single-Peer 또는 SceneManager 없는 경우)
+            hasHit = Physics.Raycast(position, Vector3.down, out hit, _groundCheckDistance + 0.5f);
+        }
+
+        if (hasHit)
         {
             hitPoint = hit.point;
             return true;

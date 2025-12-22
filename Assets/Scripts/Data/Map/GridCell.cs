@@ -1,9 +1,9 @@
-namespace ProjectVoid.Map
+﻿namespace ProjectVoid.Map
 {
     /// <summary>
     /// 맵 레이아웃 그리드 셀 타입
     /// </summary>
-    public enum EGridCell
+    public enum GridCell
     {
         /// <summary>
         /// 빈 공간 (청크 생성 안 함)

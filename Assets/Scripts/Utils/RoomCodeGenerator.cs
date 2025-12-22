@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -26,7 +26,7 @@ public static class RoomCodeGenerator
     #region Public Methods
 
     /// <summary>
-    /// 새로운 방 코드 생성 (중복 방지)
+    /// 새로운 방 코드 생성 (로컬 중복 방지)
     /// </summary>
     /// <returns>6자리 방 코드 (예: "AB3K7M")</returns>
     public static string GenerateCode()
@@ -47,8 +47,37 @@ public static class RoomCodeGenerator
             attempts++;
         }
 
-        // Why: 100번 시도해도 중복이면 타임스탬프 추가
+        // Why: 100번 시도해도 중복이면 그냥 반환 (확률상 거의 불가능)
         return GenerateRandomCode();
+    }
+
+    /// <summary>
+    /// 서버에서 사용: 기존 세션 목록과 비교하여 중복되지 않는 방 코드 생성
+    /// </summary>
+    /// <param name="existingRoomCodes">기존에 사용 중인 방 코드 목록</param>
+    /// <param name="maxRetries">최대 재시도 횟수</param>
+    /// <returns>중복되지 않는 방 코드</returns>
+    public static string GenerateUniqueCodeSync(IEnumerable<string> existingRoomCodes, int maxRetries = 100)
+    {
+        var existingSet = new HashSet<string>(existingRoomCodes ?? Enumerable.Empty<string>());
+
+        for (int i = 0; i < maxRetries; i++)
+        {
+            string code = GenerateRandomCode();
+
+            if (!existingSet.Contains(code) && !_usedCodes.Contains(code))
+            {
+                _usedCodes.Add(code);
+                UnityEngine.Debug.Log($"[RoomCodeGenerator] Generated unique code: {code} (attempt {i + 1}/{maxRetries})");
+                return code;
+            }
+        }
+
+        // Fallback: 그냥 랜덤 코드 반환 (32^6 = 10억 개 조합이라 충돌 확률 극히 낮음)
+        string fallbackCode = GenerateRandomCode();
+        _usedCodes.Add(fallbackCode);
+        UnityEngine.Debug.LogWarning($"[RoomCodeGenerator] Using fallback code after {maxRetries} attempts: {fallbackCode}");
+        return fallbackCode;
     }
 
     /// <summary>
@@ -70,11 +99,19 @@ public static class RoomCodeGenerator
 
             // Why: 현재 존재하는 모든 세션의 방 코드와 중복 확인
             var sessions = await matchmakingManager.GetAllGameSessions();
-            bool isDuplicate = sessions.Any(s => s.Name.EndsWith($"_{code}"));
-
-            if (!isDuplicate)
+            bool isDuplicate = sessions.Any(s => 
             {
-                // Why: 로컬 캐시에도 추가
+                // Session Properties에서 RoomCode 확인
+                if (s.Properties != null && s.Properties.TryGetValue("RoomCode", out var roomCodeProp))
+                {
+                    string existingCode = roomCodeProp.PropertyValue?.ToString();
+                    return string.Equals(existingCode, code, StringComparison.OrdinalIgnoreCase);
+                }
+                return false;
+            });
+
+            if (!isDuplicate && !_usedCodes.Contains(code))
+            {
                 _usedCodes.Add(code);
                 UnityEngine.Debug.Log($"[RoomCodeGenerator] Generated unique code: {code} (attempt {i + 1}/{maxRetries})");
                 return code;
@@ -105,11 +142,18 @@ public static class RoomCodeGenerator
 
             // Why: 현재 존재하는 모든 세션의 방 코드와 중복 확인
             var sessions = await sessionFetcher();
-            bool isDuplicate = sessions.Any(s => s.Name.Contains($"_{code}"));
-
-            if (!isDuplicate)
+            bool isDuplicate = sessions.Any(s => 
             {
-                // Why: 로컬 캐시에도 추가
+                if (s.Properties != null && s.Properties.TryGetValue("RoomCode", out var roomCodeProp))
+                {
+                    string existingCode = roomCodeProp.PropertyValue?.ToString();
+                    return string.Equals(existingCode, code, StringComparison.OrdinalIgnoreCase);
+                }
+                return false;
+            });
+
+            if (!isDuplicate && !_usedCodes.Contains(code))
+            {
                 _usedCodes.Add(code);
                 UnityEngine.Debug.Log($"[RoomCodeGenerator] Generated unique code: {code} (attempt {i + 1}/{maxRetries})");
                 return code;
@@ -140,7 +184,7 @@ public static class RoomCodeGenerator
         if (string.IsNullOrEmpty(code) || code.Length != CODE_LENGTH)
             return false;
 
-        foreach (char c in code)
+        foreach (char c in code.ToUpper())
         {
             if (!CODE_CHARS.Contains(c.ToString()))
                 return false;

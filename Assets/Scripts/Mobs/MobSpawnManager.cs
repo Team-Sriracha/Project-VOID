@@ -1,6 +1,7 @@
-using Fusion;
+﻿using Fusion;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using ProjectVoid.Map;
 
 /// <summary>
@@ -54,9 +55,14 @@ public class MobSpawnManager : NetworkBehaviour
 
     public override void Spawned()
     {
+        // Why: NetworkObject를 씬 전환 시에도 유지하려면 Runner.MakeDontDestroyOnLoad 사용
+        // Why: 서버에서만 호출 - 클라이언트에서는 assertion 경고가 발생할 수 있음
         if (HasStateAuthority)
         {
+            Runner.MakeDontDestroyOnLoad(gameObject);
             SpawnMobParent();
+            _spawnedMobs.Clear();
+            _mobUIMap.Clear();
         }
 
         // Why: 클라이언트도 UI Canvas 참조 필요
@@ -65,16 +71,34 @@ public class MobSpawnManager : NetworkBehaviour
             _uiCanvas = FindUICanvas();
         }
 
+        if (!HasStateAuthority)
+        {
+            CacheExistingMobs();
+        }
+
         // Why: 늦게 접속한 클라이언트를 위해 기존 몹들의 UI 생성
         CreateUIForExistingMobs();
     }
 
     public override void Render()
     {
-        // Why: 성능 최적화 - 0.5초마다 새로 스폰된 몹 체크
+        // Why: 씬 전환 후 Canvas 참조가 무효화될 수 있으므로 매번 체크
+        if (_uiCanvas == null)
+        {
+            _uiCanvas = FindUICanvas();
+        }
+        
+        // Why: 성능 최적화 - 0.5초마다 체크
         if (Time.time - _lastUICheckTime >= UI_CHECK_INTERVAL)
         {
-            CheckForNewMobs();
+            // Why: 클라이언트는 서버에서 스폰된 몹을 네트워크로 받으므로
+            // 주기적으로 씬에서 몹을 찾아 _spawnedMobs 리스트 업데이트
+            if (!HasStateAuthority)
+            {
+                CacheExistingMobs();
+            }
+            
+            CreateUIForTrackedMobs();
             _lastUICheckTime = Time.time;
         }
     }
@@ -110,6 +134,9 @@ public class MobSpawnManager : NetworkBehaviour
         GameObject parentObj = new GameObject("MobParent");
         _mobParent = parentObj.transform;
 
+        // Why: Multi-Peer 환경에서 MobParent를 Runner의 씬으로 이동하여 Physics 충돌 보장
+        MoveToRunnerScene(parentObj);
+
         LogDebug("MobParent 생성 완료");
     }
 
@@ -120,18 +147,25 @@ public class MobSpawnManager : NetworkBehaviour
     /// <returns>몹 UI 전용 Canvas</returns>
     private Canvas FindUICanvas()
     {
-        // Why: 기존에 생성된 MobOverheadCanvas가 있는지 먼저 확인
-        Canvas[] canvases = FindObjectsByType<Canvas>(FindObjectsSortMode.None);
-        foreach (var canvas in canvases)
+        // Why: 캐시된 Canvas가 있으면 재사용
+        if (_uiCanvas != null)
         {
-            if (canvas.gameObject.name == "MobOverheadCanvas")
+            return _uiCanvas;
+        }
+
+        // Why: 씬에서 "MobOverheadCanvas" 이름의 Canvas 검색 (GameObject.Find 사용)
+        GameObject canvasObj = GameObject.Find("MobOverheadCanvas");
+        if (canvasObj != null)
+        {
+            _uiCanvas = canvasObj.GetComponent<Canvas>();
+            if (_uiCanvas != null)
             {
-                return canvas;
+                return _uiCanvas;
             }
         }
 
         // Why: 없으면 새로 생성 - 다른 UI보다 낮은 Sort Order로 설정
-        GameObject canvasObj = new GameObject("MobOverheadCanvas");
+        canvasObj = new GameObject("MobOverheadCanvas");
         Canvas mobCanvas = canvasObj.AddComponent<Canvas>();
         mobCanvas.renderMode = RenderMode.ScreenSpaceOverlay;
         mobCanvas.sortingOrder = -10; // Why: 메인 UI(기본값 0)보다 낮게 설정하여 아래에 표시
@@ -144,6 +178,9 @@ public class MobSpawnManager : NetworkBehaviour
 
         // Why: Graphic Raycaster 추가 (UI 상호작용용, 필요시)
         canvasObj.AddComponent<UnityEngine.UI.GraphicRaycaster>();
+
+        // Why: Multi-Peer 환경에서 Canvas를 Runner의 씬으로 이동
+        MoveToRunnerScene(canvasObj);
 
         LogDebug("MobOverheadCanvas 생성 완료 (Sort Order: -10)");
         return mobCanvas;
@@ -323,38 +360,52 @@ public class MobSpawnManager : NetworkBehaviour
     /// </summary>
     private void CreateUIForExistingMobs()
     {
-        // Why: 씬의 모든 MobCombat을 찾아서 UI 생성
-        MobCombat[] allMobs = FindObjectsByType<MobCombat>(FindObjectsSortMode.None);
-        
-        foreach (MobCombat mob in allMobs)
-        {
-            NetworkObject netObj = mob.GetComponent<NetworkObject>();
-            if (netObj != null && netObj.IsValid)
-            {
-                CreateOverheadUI(netObj);
-            }
-        }
-
-        LogDebug($"기존 몹 UI 생성 완료: {allMobs.Length}개");
+        // Why: 이미 추적 중인 몹 리스트 기반으로 UI 생성
+        CreateUIForTrackedMobs();
+        LogDebug($"기존 몹 UI 생성 완료: {_spawnedMobs.Count}개");
     }
 
     /// <summary>
-    /// 새로 스폰된 몹이 있는지 확인하여 UI 생성.
-    /// Render에서 호출됨.
+    /// 추적 리스트 기반으로 UI를 생성합니다.
     /// </summary>
-    private void CheckForNewMobs()
+    private void CreateUIForTrackedMobs()
     {
-        // Why: 씬의 모든 MobCombat을 찾아서 UI가 없는 몹에 대해 생성
-        MobCombat[] allMobs = FindObjectsByType<MobCombat>(FindObjectsSortMode.None);
-        
-        foreach (MobCombat mob in allMobs)
+        foreach (NetworkObject mob in _spawnedMobs)
         {
-            NetworkObject netObj = mob.GetComponent<NetworkObject>();
-            if (netObj != null && netObj.IsValid && !_mobUIMap.ContainsKey(netObj))
+            if (mob != null && mob.IsValid && !_mobUIMap.ContainsKey(mob))
             {
-                CreateOverheadUI(netObj);
+                CreateOverheadUI(mob);
             }
         }
+    }
+
+    /// <summary>
+    /// 기존 씬에 존재하는 몹을 캐싱합니다 (Late Joiner용, 1회 실행).
+    /// Why: Late Joiner는 서버에서 이미 스폰된 NetworkObject를 받지만, _spawnedMobs 리스트는 클라이언트에서 비어있음
+    /// </summary>
+    private void CacheExistingMobs()
+    {
+        if (HasStateAuthority)
+        {
+            // Why: 서버는 이미 _spawnedMobs에 모든 몹을 추가했으므로 추가 작업 불필요
+            LogDebug($"서버 - 현재 {_spawnedMobs.Count}개 몹 관리 중");
+            return;
+        }
+
+        // Why: Late Joiner는 씬에 있는 모든 MobCombat을 찾아서 _spawnedMobs에 추가
+        MobCombat[] allMobs = FindObjectsByType<MobCombat>(FindObjectsSortMode.None);
+        _spawnedMobs.Clear();
+
+        foreach (MobCombat mobCombat in allMobs)
+        {
+            NetworkObject mobNetObj = mobCombat.GetComponent<NetworkObject>();
+            if (mobNetObj != null && mobNetObj.IsValid)
+            {
+                _spawnedMobs.Add(mobNetObj);
+            }
+        }
+
+        LogDebug($"Late Joiner - {_spawnedMobs.Count}개 몹 캐싱 완료");
     }
 
     /// <summary>
@@ -363,6 +414,11 @@ public class MobSpawnManager : NetworkBehaviour
     /// <param name="mob">몹 NetworkObject</param>
     private void CreateOverheadUI(NetworkObject mob)
     {
+        if (mob == null || !mob.IsValid)
+        {
+            return;
+        }
+
         // Why: Canvas 다시 검색 시도
         if (_uiCanvas == null)
         {
@@ -422,6 +478,17 @@ public class MobSpawnManager : NetworkBehaviour
     #endregion
 
     #region Helper Methods
+
+    /// <summary>
+    /// Multi-Peer 환경에서 GameObject를 Runner의 씬으로 이동합니다.
+    /// </summary>
+    private void MoveToRunnerScene(GameObject obj)
+    {
+        if (obj == null) return;
+        if (Runner == null || !Runner.SimulationUnityScene.IsValid()) return;
+
+        SceneManager.MoveGameObjectToScene(obj, Runner.SimulationUnityScene);
+    }
 
     private void LogDebug(string message)
     {

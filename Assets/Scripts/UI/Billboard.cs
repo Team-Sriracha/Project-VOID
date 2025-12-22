@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 
 /// <summary>
 /// 카메라를 향해 항상 회전하는 빌보드(오버헤드 UI 등)를 구현합니다.
@@ -57,10 +57,16 @@ public class Billboard : MonoBehaviour
     }
 
     /// <summary>
-    /// 카메라가 유효한지 확인합니다.
+    /// 카메라가 유효한지 확인합니다. 없거나 비활성화되면 재탐색합니다.
     /// </summary>
     private bool IsCameraValid()
     {
+        // Why: 카메라가 없거나 비활성화되면 재탐색 (씬 전환 시 카메라 변경 대응)
+        if (_mainCamera == null || !_mainCamera.isActiveAndEnabled)
+        {
+            _mainCamera = Camera.main;
+        }
+        
         return _mainCamera != null;
     }
 

@@ -1,4 +1,4 @@
-using Fusion;
+﻿using Fusion;
 using UnityEngine;
 
 /// <summary>
@@ -98,6 +98,7 @@ public class PlayerCombat : NetworkBehaviour, IDamageable
     /// </summary>
     public void TakeDamage(float damage, PlayerRef attacker)
     {
+        if (!HasStateAuthority) return;
         if (!IsAlive) return;
         RPC_ApplyDamage(damage, attacker);
     }
@@ -166,16 +167,25 @@ public class PlayerCombat : NetworkBehaviour, IDamageable
 
         RPC_ShowDefeatUI(Object.InputAuthority);
 
+        // Why: 킬러의 무기 ID 가져오기
+        string killerWeaponID = null;
+        if (Runner.TryGetPlayerObject(killer, out var killerObject) &&
+            killerObject.TryGetComponent<NetworkedWeapon>(out var killerWeapon) &&
+            killerWeapon.CurrentWeaponData != null)
+        {
+            killerWeaponID = killerWeapon.CurrentWeaponData.ItemID;
+        }
+
         // Multi-Peer 호환성: Singleton 대신 Runner를 통해 GameStateManager 접근
         var gameStateManager = NetworkManager.GetManager(Runner)?.GameStateManager;
         if (gameStateManager != null)
         {
-            gameStateManager.OnPlayerDied(Object.InputAuthority, killer);
+            gameStateManager.OnPlayerDied(Object.InputAuthority, killer, killerWeaponID);
         }
     }
 
     /// <summary>
-    /// 킬러에게 보상(킬 카운트, XP)을 지급합니다.
+    /// 킬러에게 보상(킬 카운트, XP)을 지급합니다 (서버에서 호출).
     /// </summary>
     private void ProcessKillerReward(PlayerRef killer)
     {
@@ -184,7 +194,8 @@ public class PlayerCombat : NetworkBehaviour, IDamageable
         if (Runner.TryGetPlayerObject(killer, out var killerObject) &&
             killerObject.TryGetComponent<PlayerCombat>(out var killerCombat))
         {
-            killerCombat.RPC_AddKill();
+            // Why: 서버에서 직접 KillCount 증가 (RPC 권한 문제 해결)
+            killerCombat.AddPlayerKill();
         }
     }
 
@@ -235,18 +246,20 @@ public class PlayerCombat : NetworkBehaviour, IDamageable
 
         CurrentXP += xpAmount;
 
-        while (CurrentXP >= XPToNextLevel)
+        float xpToNext = XPToNextLevel;
+        while (CurrentXP >= xpToNext)
         {
-            LevelUp();
+            LevelUp(xpToNext);
+            xpToNext = XPToNextLevel;
         }
     }
 
     /// <summary>
     /// 플레이어를 레벨업시킵니다.
     /// </summary>
-    private void LevelUp()
+    private void LevelUp(float xpToNextLevel)
     {
-        CurrentXP -= XPToNextLevel;
+        CurrentXP -= xpToNextLevel;
         Level++;
     }
 
@@ -254,9 +267,24 @@ public class PlayerCombat : NetworkBehaviour, IDamageable
 
     #region RPC Methods
 
-    [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
-    private void RPC_AddKill()
+    /// <summary>
+    /// 플레이어 처치 시 킬 카운트를 증가시킵니다 (서버에서 직접 호출).
+    /// </summary>
+    public void AddPlayerKill()
     {
+        if (!HasStateAuthority) return;
+
+        KillCount++;
+        if (_stats != null) AddXP(_stats.XPPerPlayerKill);
+        Debug.Log($"[PlayerCombat] Player Kill! KillCount: {KillCount}");
+    }
+
+    [Rpc(RpcSources.All, RpcTargets.StateAuthority)]
+    private void RPC_AddKill(RpcInfo info = default)
+    {
+        if (!HasStateAuthority) return;
+        if (info.Source != Object.InputAuthority) return;
+
         KillCount++;
 
         if (_stats != null) AddXP(_stats.XPPerPlayerKill);

@@ -1,4 +1,4 @@
-using Fusion;
+﻿using Fusion;
 using UnityEngine;
 
 /// <summary>
@@ -101,9 +101,26 @@ public class Projectile : NetworkBehaviour
         float moveDistance = Speed * Runner.DeltaTime;
         Vector3 movement = Direction.normalized * moveDistance;
 
-        // Why: 이동 경로에 충돌 체크 (HitLayerMask 적용)
-        if (Physics.Raycast(transform.position, Direction, out RaycastHit hit, moveDistance, HitLayerMask))
+        // Why: Multi-Peer 환경에서 올바른 Physics 씬에서 Raycast 수행
+        RaycastHit hit;
+        bool hasHit = false;
+
+        if (Runner.SceneManager != null && Runner.SceneManager.TryGetPhysicsScene3D(out var physicsScene) && physicsScene.IsValid())
         {
+            // Multi-Peer: 해당 Runner의 PhysicsScene에서 Raycast
+            hasHit = physicsScene.Raycast(transform.position, Direction, out hit, moveDistance, HitLayerMask);
+            Debug.Log($"[Projectile] PhysicsScene Raycast - Scene: {physicsScene}, HasHit: {hasHit}, Position: {transform.position}, LayerMask: {HitLayerMask}");
+        }
+        else
+        {
+            // Fallback: 기본 Physics.Raycast (Single-Peer 또는 SceneManager 없는 경우)
+            hasHit = Physics.Raycast(transform.position, Direction, out hit, moveDistance, HitLayerMask);
+            Debug.LogWarning($"[Projectile] Fallback Physics.Raycast used! SceneManager: {Runner.SceneManager != null}");
+        }
+
+        if (hasHit)
+        {
+            Debug.Log($"[Projectile] HIT! Target: {hit.collider.gameObject.name}, Layer: {LayerMask.LayerToName(hit.collider.gameObject.layer)}");
             // 충돌 처리
             HandleHit(hit);
         }
@@ -152,12 +169,33 @@ public class Projectile : NetworkBehaviour
     {
         if (_hasHit) return;
 
+        if (Owner == PlayerRef.None)
+        {
+            _hasHit = true;
+            Runner.Despawn(Object);
+            return;
+        }
+
         _hasHit = true;
 
         Debug.Log($"[Projectile] HandleHit - 충돌: {hit.collider.gameObject.name}, 레이어: {LayerMask.LayerToName(hit.collider.gameObject.layer)}");
 
         // Why: 충돌 지점으로 이동 (정확한 히트)
         transform.position = hit.point;
+
+        // Why: Owner 검증 (PlayerRef.None은 무효한 공격자)
+        if (Owner == PlayerRef.None)
+        {
+            Debug.LogWarning("[Projectile] Owner가 PlayerRef.None입니다. 데미지 적용 불가.");
+            RPC_SpawnHitEffect(hit.point, hit.normal);
+
+            // Why: Projectile을 즉시 Despawn (풀링 없이)
+            if (HasStateAuthority)
+            {
+                DespawnTimer = TickTimer.CreateFromSeconds(Runner, 0.1f);
+            }
+            return;
+        }
 
         // Why: 데미지 처리
         IDamageable damageable = hit.collider.GetComponent<IDamageable>();

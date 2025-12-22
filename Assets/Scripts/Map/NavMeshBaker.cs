@@ -1,4 +1,4 @@
-using Fusion;
+﻿using Fusion;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.AI;
@@ -65,6 +65,16 @@ public class NavMeshBaker : NetworkBehaviour
     #endregion
 
     #region Fusion Lifecycle
+
+    public override void Spawned()
+    {
+        // Why: NetworkObject를 씬 전환 시에도 유지하려면 Runner.MakeDontDestroyOnLoad 사용
+        // Why: 서버에서만 호출 - 클라이언트에서는 assertion 경고가 발생할 수 있음
+        if (HasStateAuthority)
+        {
+            Runner.MakeDontDestroyOnLoad(gameObject);
+        }
+    }
 
     public override void Despawned(NetworkRunner runner, bool hasState)
     {

@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 
 namespace ProjectVoid.Map
 {
@@ -29,7 +29,7 @@ namespace ProjectVoid.Map
         [SerializeField] private string _chunkId;
 
         [Tooltip("청크 타입 - 시각적/게임플레이 차별화 목적 (Central=중앙허브, Normal=일반방, Special=특수방)")]
-        [SerializeField] private EChunkType _chunkType = EChunkType.Normal;
+        [SerializeField] private ChunkType _chunkType = ChunkType.Normal;
 
         [Header("생성 확률")]
         [Tooltip("이 청크가 선택될 가중치 (높을수록 자주 등장)")]
@@ -62,7 +62,7 @@ namespace ProjectVoid.Map
         /// <summary>
         /// 청크 타입
         /// </summary>
-        public EChunkType ChunkType => _chunkType;
+        public ChunkType ChunkType => _chunkType;
 
         /// <summary>
         /// 생성 가중치

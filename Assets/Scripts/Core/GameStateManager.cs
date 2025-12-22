@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Fusion;
@@ -31,29 +31,16 @@ public class GameStateManager : NetworkBehaviour
     /// 클라이언트 전용 싱글톤. 서버(Multi-Peer)에서는 사용하지 마세요!
     /// 서버에서는 NetworkManager.Get(runner).GameStateManager를 사용해야 합니다.
     /// </summary>
-    public static GameStateManager Instance
-    {
-        get
-        {
-            if (Application.isEditor || UnityEngine.SceneManagement.SceneManager.GetActiveScene().name == "GamePlay")
-            {
-                return _instance;
-            }
-            return _instance;
-        }
-    }
+    public static GameStateManager Instance => _instance;
 
     #endregion
 
     #region Serialized Fields
 
-    // [TEST MODE] 테스트 완료 후 _testMode를 false로 설정하거나 이 섹션 제거
-    [Header("테스트 모드")]
-    [Tooltip("테스트 모드 - 승리 조건 무시, 리스폰 허용")]
-    [SerializeField] private bool _testMode = false;
 
-    // [TEST MODE]
-    public bool IsTestMode => _testMode;
+
+    [Header("프리팹 설정")]
+    [SerializeField] private GameObject _itemDatabasePrefab; // ItemDatabase 자동 생성을 위한 프리팹
 
     [Header("게임 설정")]
     [Tooltip("전체 게임 시간 (초)")]
@@ -103,6 +90,11 @@ public class GameStateManager : NetworkBehaviour
 
     private const float MIN_SESSION_TIME_BEFORE_AUTO_SHUTDOWN = 5f; // 5초
     private float _sessionStartTime;
+    
+    // Why: GamePlay 씬 로드 후 맵 초기화를 위해 게임 모드 정보를 임시 저장
+    private GameMode _pendingGameMode;
+    private int _pendingPlayerCount;
+    private bool _hasPendingMapInit = false;
 
     #endregion
 
@@ -178,20 +170,46 @@ public class GameStateManager : NetworkBehaviour
 
     public override void Spawned()
     {
-        // Client인 경우에만 Singleton 할당
-        if (!Runner.IsServer)
+        // Why: NetworkObject를 씬 전환 시에도 유지하려면 Runner.MakeDontDestroyOnLoad 사용
+        // Why: 서버에서만 호출 - 클라이언트에서는 assertion 경고가 발생할 수 있음
+        if (HasStateAuthority)
         {
-            _instance = this;
+            Runner.MakeDontDestroyOnLoad(gameObject);
         }
+        
+        _instance = this;
+        ServiceLocator.Register(Runner, this);
 
-        // Why: 프리팹에서 _testMode가 true로 설정되어 있을 수 있으므로 강제로 false로 설정
-        _testMode = false;
+        // Why: ItemDatabase가 없으면 프리팹으로 생성 (LootBox 문제 해결)
+        // Why: ItemDatabase가 없으면 프리팹으로 생성 (LootBox 문제 해결)
+        // 주의: ItemDatabase.Instance를 호출하면 없을 때 빈 깡통을 자동 생성하므로, FindFirstObjectByType으로 먼저 체크해야 함
+        var existingDb = FindFirstObjectByType<ItemDatabase>();
+        if (existingDb == null && _itemDatabasePrefab != null)
+        {
+            Debug.Log("[GameStateManager] ItemDatabase가 없어서 할당된 프리팹으로 생성합니다.");
+            var db = Instantiate(_itemDatabasePrefab);
+            db.name = "ItemDatabase";
+            DontDestroyOnLoad(db); // 생성된 오브젝트 유지
+        }
+        else if (existingDb == null)
+        {
+             Debug.LogWarning("[GameStateManager] ItemDatabase 인스턴스도 없고 GameStateManager에 프리팹 할당도 안 되어 있습니다!");
+        }
 
         if (HasStateAuthority)
         {
             AlivePlayers = 0; // 초기 생존자 수는 0으로 설정
+            
+            // Why: 이미 접속해 있는 플레이어 수로 초기화 (서버 자신 제외)
             ConnectedPlayers = 0;
-            // TargetPlayerCount는 NetworkManager에서 설정됩니다.
+            foreach (var player in Runner.ActivePlayers)
+            {
+                if (Runner.GameMode == Fusion.GameMode.Server && player == Runner.LocalPlayer) continue;
+                ConnectedPlayers++;
+            }
+
+            // Why: Session Properties에서 게임 모드 정보 복원 (씬 전환 후에도 유지됨)
+            RestoreStateFromSessionProperties();
 
             IsGameStarted = false;
             CurrentPhase = 1;
@@ -199,16 +217,22 @@ public class GameStateManager : NetworkBehaviour
             IsGameEnded = false;
             _sessionStartTime = Time.time;
 
-            Debug.Log($"[GameStateManager] Spawned - TestMode: {_testMode}, Waiting for TargetPlayerCount from NetworkManager.");
+            Debug.Log($"[GameStateManager] Spawned - Connected: {ConnectedPlayers}, TargetPlayerCount: {TargetPlayerCount}");
         }
     }
 
     public override void Despawned(NetworkRunner runner, bool hasState)
     {
-        if (_instance == this)
+        // Why: 세션이 종료되는 경우에만 싱글톤 해제
+        // hasState가 false면 네트워크 상태가 유효하지 않음 = 세션 종료
+        // 다른 플레이어가 나가는 것으로 인해 싱글톤이 해제되면 안 됨
+        if (_instance == this && !hasState)
         {
+            Debug.Log("[GameStateManager] Despawned - clearing singleton (hasState=false, session ending)");
             _instance = null;
         }
+
+        ServiceLocator.Clear(runner);
     }
 
     /// <summary>
@@ -218,20 +242,83 @@ public class GameStateManager : NetworkBehaviour
     {
         if (!HasStateAuthority) return;
 
-        // Why: 첫 클라이언트가 도착해 모드/타겟 정보가 설정되기 전까지 다른 모드 유입을 막기 위해 잠시 예약 상태로 전환
-        if (TargetPlayerCount == 0)
-        {
-            UpdateSessionReservation(true);
-        }
-
+        // Why: Mode 필터링만으로 충분, IsReserved 제거됨
         ConnectedPlayers++;
 
         Debug.Log($"[GameStateManager] Player joined - Connected: {ConnectedPlayers}/{TargetPlayerCount}, Alive: {AlivePlayers}, IsGameStarted: {IsGameStarted}");
 
-        // Why: 게임 시작 전이라면 목표 인원 체크
-        if (!IsGameStarted)
+        // Why: 게임 시작 전이고 목표 인원에 도달했으면 GamePlay 씬으로 전환
+        if (!IsGameStarted && TargetPlayerCount > 0 && ConnectedPlayers >= TargetPlayerCount)
         {
-            CheckAndStartGame();
+            Debug.Log($"[GameStateManager] Target player count reached ({ConnectedPlayers}/{TargetPlayerCount})! Transitioning to GamePlay scene...");
+            TransitionToGamePlayScene();
+        }
+    }
+
+    /// <summary>
+    /// Matching 씬에서 GamePlay 씬으로 전환합니다 (서버만).
+    /// NetworkSceneManager가 모든 클라이언트에게 자동으로 씬 전환을 동기화합니다.
+    /// </summary>
+    private void TransitionToGamePlayScene()
+    {
+        if (!HasStateAuthority) return;
+
+        // Why: 코루틴으로 1초 딜레이 후 씬 전환
+        StartCoroutine(TransitionToGamePlaySceneWithDelay());
+    }
+
+    private System.Collections.IEnumerator TransitionToGamePlaySceneWithDelay()
+    {
+        int gamePlayIndex = UnityEngine.SceneManagement.SceneUtility.GetBuildIndexByScenePath("Assets/Scenes/GamePlay.unity");
+        if (gamePlayIndex < 0)
+        {
+            Debug.LogError("[GameStateManager] GamePlay scene not found in Build Settings!");
+            yield break;
+        }
+
+        Debug.Log($"[GameStateManager] Match complete! Showing '매칭완료' for 1 second before scene transition...");
+        
+        // Why: 모든 클라이언트에게 매칭 완료 알림 (1초간 "매칭완료" 표시)
+        RPC_NotifyMatchComplete();
+        
+        // Why: 1초 대기 (클라이언트에서 "매칭완료" 표시 시간)
+        yield return new WaitForSeconds(1f);
+        
+        Debug.Log($"[GameStateManager] Loading GamePlay scene (index: {gamePlayIndex}) via NetworkSceneManager...");
+        
+        // Why: 모든 클라이언트에게 씬 전환 알림 (매칭 패널 닫기 등)
+        RPC_NotifySceneTransition();
+        
+        // Why: NetworkSceneManager를 통해 모든 클라이언트에게 씬 로드 동기화 (Single 모드로 명시하여 이전 씬 언로드)
+        Runner.LoadScene(SceneRef.FromIndex(gamePlayIndex), new UnityEngine.SceneManagement.LoadSceneParameters(UnityEngine.SceneManagement.LoadSceneMode.Single));
+    }
+
+    /// <summary>
+    /// GamePlay 씬 로드 완료 시 호출됩니다 (NetworkManager.OnSceneLoadDone에서 호출).
+    /// 대기 중인 맵 초기화를 수행합니다.
+    /// </summary>
+    public void OnGamePlaySceneLoaded()
+    {
+        if (!HasStateAuthority) return;
+        
+        if (!_hasPendingMapInit)
+        {
+            Debug.Log("[GameStateManager] OnGamePlaySceneLoaded - No pending map init");
+            return;
+        }
+        
+        Debug.Log($"[GameStateManager] OnGamePlaySceneLoaded - Initializing map: Mode={_pendingGameMode}, Players={_pendingPlayerCount}");
+        
+        // Why: 이제 맵을 초기화 (GamePlay 씬에서)
+        NetworkManager netManager = NetworkManager.GetManager(Runner);
+        if (netManager != null && netManager.NetworkMapManager != null && !netManager.NetworkMapManager.IsReady())
+        {
+            netManager.NetworkMapManager.InitializeMap(_pendingGameMode, _pendingPlayerCount);
+            _hasPendingMapInit = false;
+        }
+        else
+        {
+            Debug.LogWarning("[GameStateManager] OnGamePlaySceneLoaded - NetworkMapManager not ready!");
         }
     }
 
@@ -252,19 +339,18 @@ public class GameStateManager : NetworkBehaviour
         bool noClientsRemaining = ConnectedPlayers <= 0;
         if (noClientsRemaining)
         {
-            // Why: 게임이 시작되지 않았으면 세션을 종료하지 않고 재사용 가능하도록 설정
+            // Why: 게임이 시작되지 않았으면 세션을 바로 종료
             if (!IsGameStarted)
             {
-                Debug.Log("[GameStateManager] All players left before game started. Resetting session for reuse...");
-                ResetSessionForReuse();
+                Debug.Log("[GameStateManager] All players left before game started. Terminating session...");
+                _ = ShutdownSessionImmediately();
                 return;
             }
 
             // Why: 게임이 시작된 후 모든 플레이어가 나갔을 때만 세션 종료
             float sessionUptime = Time.time - _sessionStartTime;
 
-            // [TEST MODE] 테스트 모드에서는 최소 시간 체크 무시
-            bool shouldShutdown = _testMode || sessionUptime >= MIN_SESSION_TIME_BEFORE_AUTO_SHUTDOWN;
+            bool shouldShutdown = sessionUptime >= MIN_SESSION_TIME_BEFORE_AUTO_SHUTDOWN;
 
             if (shouldShutdown)
             {
@@ -274,47 +360,7 @@ public class GameStateManager : NetworkBehaviour
         }
     }
 
-    /// <summary>
-    /// 세션을 재사용 가능한 상태로 리셋합니다.
-    /// </summary>
-    private void ResetSessionForReuse()
-    {
-        if (!HasStateAuthority) return;
 
-        // Why: 플레이어 카운트 리셋
-        AlivePlayers = 0;
-        ConnectedPlayers = 0;
-        TargetPlayerCount = 0;
-
-        // Why: 세션 속성 업데이트 - IsReserved = false로 설정하여 다른 플레이어가 조인 가능하도록
-        try
-        {
-            if (Runner.SessionInfo.IsValid && Runner.SessionInfo.Properties != null)
-            {
-                var properties = new Dictionary<string, SessionProperty>
-                {
-                    { "IsReserved", false }
-                };
-                Runner.SessionInfo.UpdateCustomProperties(properties);
-                Debug.Log("[GameStateManager] Session reset for reuse (IsReserved = false)");
-            }
-        }
-        catch (System.Exception ex)
-        {
-            Debug.LogWarning($"[GameStateManager] Failed to reset session: {ex.Message}");
-        }
-    }
-
-    // [TEST MODE] 테스트 완료 후 이 메서드 제거
-    /// <summary>
-    /// 플레이어 리스폰 시 생존자 수 증가 (테스트용)
-    /// </summary>
-    public void OnPlayerRespawned()
-    {
-        if (!HasStateAuthority) return;
-
-        AlivePlayers++;
-    }
 
     public override void FixedUpdateNetwork()
     {
@@ -423,14 +469,15 @@ public class GameStateManager : NetworkBehaviour
     }
 
     /// <summary>
-    /// ServerLauncher에 세션 종료 통지
+    /// Multi-Peer 서버에 세션 종료 통지
+    /// Why: ServerLauncher 삭제됨, MultiPeerServerManager 사용
     /// </summary>
     private void NotifyServerLauncher(NetworkRunner runner)
     {
-        ServerLauncher serverLauncher = FindFirstObjectByType<ServerLauncher>();
-        if (serverLauncher != null)
+        var serverManager = FindFirstObjectByType<MultiPeerServerManager>();
+        if (serverManager != null && runner != null && runner.SessionInfo.IsValid)
         {
-            serverLauncher.OnSessionEnded(runner);
+            _ = serverManager.StopSession(runner.SessionInfo.Name);
         }
     }
 
@@ -448,7 +495,7 @@ public class GameStateManager : NetworkBehaviour
         foreach (var player in Runner.ActivePlayers)
         {
             // Why: Server 모드에서는 서버 자신(LocalPlayer)을 제외
-            if (Runner.GameMode == GameMode.Server && player == Runner.LocalPlayer)
+            if (Runner.GameMode == Fusion.GameMode.Server && player == Runner.LocalPlayer)
             {
                 continue;
             }
@@ -473,7 +520,10 @@ public class GameStateManager : NetworkBehaviour
     /// <summary>
     /// 플레이어 사망 처리 (서버만).
     /// </summary>
-    public void OnPlayerDied(PlayerRef victim, PlayerRef killer)
+    /// <param name="victim">사망한 플레이어</param>
+    /// <param name="killer">처치한 플레이어</param>
+    /// <param name="weaponID">킬러가 사용한 무기의 ItemID (null 가능)</param>
+    public void OnPlayerDied(PlayerRef victim, PlayerRef killer, string weaponID = null)
     {
         if (!HasStateAuthority) return;
 
@@ -483,16 +533,12 @@ public class GameStateManager : NetworkBehaviour
         string killerName = $"Player{killer.PlayerId}";
         string victimName = $"Player{victim.PlayerId}";
 
-        RPC_BroadcastKillLog(killerName, victimName);
+        RPC_BroadcastKillLog(killerName, victimName, weaponID ?? "");
 
-        // [TEST MODE] 테스트 완료 후 이 if 블록 제거
-        if (_testMode)
-        {
-            return;
-        }
+
 
         // Why: 생존자가 1명 이하면 게임 종료 (서버는 플레이어로 카운트되지 않음)
-        if (AlivePlayers <= 1)
+        if (AlivePlayers <= 1 && TargetPlayerCount > 1)
         {
             EndGame();
         }
@@ -510,7 +556,7 @@ public class GameStateManager : NetworkBehaviour
     {
         if (!HasStateAuthority) return;
 
-        Debug.Log($"[GameStateManager] RPC_SetGameModeInfo received - GameMode: {(EGameMode)gameMode}, TargetPlayerCount: {targetPlayerCount}");
+        Debug.Log($"[GameStateManager] RPC_SetGameModeInfo received - GameMode: {(GameMode)gameMode}, TargetPlayerCount: {targetPlayerCount}");
 
         // Why: 첫 번째 클라이언트의 게임 모드 정보로만 설정 (이미 설정되었으면 무시)
         if (TargetPlayerCount == 0)
@@ -518,43 +564,26 @@ public class GameStateManager : NetworkBehaviour
             TargetPlayerCount = targetPlayerCount;
             Debug.Log($"[GameStateManager] TargetPlayerCount set to: {targetPlayerCount} via RPC");
 
+            // Why: 모드에 맞춰 세션 최대 인원 갱신
+            GameMode mode = (GameMode)gameMode;
+            int maxPlayers = GetMaxPlayersForMode(mode);
+            UpdateSessionMaxPlayers(maxPlayers);
+
             // Why: 현재 매칭 중인 모드를 세션 프로퍼티에 저장 (같은 모드 매칭자들만 조인하도록)
             UpdateSessionMatchingInfo(gameMode, targetPlayerCount);
-            Debug.Log($"[GameStateManager] Session matching info updated - GameMode: {(EGameMode)gameMode}, TargetPlayerCount: {targetPlayerCount}");
+            Debug.Log($"[GameStateManager] Session matching info updated - GameMode: {(GameMode)gameMode}, TargetPlayerCount: {targetPlayerCount}");
 
-            // Why: NetworkMapManager에 맵 초기화 요청
+            // Why: 게임 모드 정보를 NetworkManager에 저장 (씬 전환 시에도 유지됨)
+            // InitializeMap은 OnSceneLoadDone에서 GamePlay 씬 로드 완료 후 NetworkManager가 호출
             NetworkManager netManager = NetworkManager.GetManager(Runner);
-            if (netManager != null && netManager.NetworkMapManager != null && !netManager.NetworkMapManager.IsReady())
+            if (netManager != null)
             {
-                EGameMode mode = (EGameMode)gameMode;
-                Debug.Log($"[GameStateManager] Initializing map via RPC - Mode: {mode}, PlayerCount: {targetPlayerCount}");
-                netManager.NetworkMapManager.InitializeMap(mode, targetPlayerCount);
+                netManager.SetPendingMapInit(mode, targetPlayerCount);
             }
+            Debug.Log($"[GameStateManager] Game mode info saved to NetworkManager. Map will initialize after GamePlay scene loads.");
 
             // Why: TargetPlayerCount가 설정되었으므로 게임 시작 조건을 다시 체크
-            CheckAndStartGame();
-        }
-    }
-
-    /// <summary>
-    /// 세션 속성을 업데이트합니다 (서버만).
-    /// </summary>
-    private void UpdateSessionProperty(string key, SessionProperty value)
-    {
-        if (!HasStateAuthority) return;
-
-        try
-        {
-            if (Runner.SessionInfo.IsValid && Runner.SessionInfo.Properties != null)
-            {
-                var properties = new Dictionary<string, SessionProperty> { { key, value } };
-                Runner.SessionInfo.UpdateCustomProperties(properties);
-                Debug.Log($"[GameStateManager] Session property updated: {key} = {value}");
-            }
-        }
-        catch (System.Exception ex)
-        {
-            Debug.LogWarning($"[GameStateManager] Failed to update session property: {ex.Message}");
+            CheckAndTransitionToGamePlay();
         }
     }
 
@@ -573,8 +602,7 @@ public class GameStateManager : NetworkBehaviour
                 var properties = new Dictionary<string, SessionProperty>
                 {
                     { "CurrentMatchingMode", gameMode }, // 현재 매칭 중인 게임 모드
-                    { "MatchingTargetPlayers", targetPlayerCount }, // 매칭 목표 인원수
-                    { "IsReserved", false } // 같은 모드 매칭자들이 조인할 수 있도록 false로 설정
+                    { "MatchingTargetPlayers", targetPlayerCount } // 매칭 목표 인원수
                 };
                 Runner.SessionInfo.UpdateCustomProperties(properties);
                 Debug.Log($"[GameStateManager] Session matching info updated - CurrentMatchingMode: {gameMode}, TargetPlayers: {targetPlayerCount}");
@@ -587,14 +615,135 @@ public class GameStateManager : NetworkBehaviour
     }
 
     /// <summary>
+    /// 모드에 맞는 최대 인원을 반환합니다.
+    /// </summary>
+    private int GetMaxPlayersForMode(GameMode mode)
+    {
+        return mode switch
+        {
+            GameMode.PracticeRange => 1,
+            GameMode.FourPlayer => 4,
+            GameMode.EightPlayer => 8,
+            GameMode.Custom => 8,
+            _ => 8
+        };
+    }
+
+    /// <summary>
+    /// 세션 최대 인원을 업데이트합니다.
+    /// </summary>
+    private void UpdateSessionMaxPlayers(int maxPlayers)
+    {
+        if (!HasStateAuthority) return;
+
+        try
+        {
+            if (Runner.SessionInfo.IsValid && Runner.SessionInfo.Properties != null)
+            {
+                var properties = new Dictionary<string, SessionProperty>
+                {
+                    { "MaxPlayers", maxPlayers }
+                };
+                Runner.SessionInfo.UpdateCustomProperties(properties);
+                Debug.Log($"[GameStateManager] Session MaxPlayers updated: {maxPlayers}");
+            }
+        }
+        catch (System.Exception ex)
+        {
+            Debug.LogWarning($"[GameStateManager] Failed to update MaxPlayers: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// 게임 시작 조건을 체크하고 시작합니다. (Matchmaking -> GamePlay 전환)
+    /// </summary>
+    private void CheckAndTransitionToGamePlay()
+    {
+        if (!HasStateAuthority) return;
+
+        Debug.Log($"[GameStateManager] CheckAndTransitionToGamePlay - Started: {IsGameStarted}, Count: {ConnectedPlayers}/{TargetPlayerCount}");
+
+        if (!IsGameStarted && TargetPlayerCount > 0 && ConnectedPlayers >= TargetPlayerCount)
+        {
+            Debug.Log($"[GameStateManager] Conditions met! Transitioning to GamePlay scene...");
+            TransitionToGamePlayScene();
+        }
+    }
+
+    /// <summary>
+    /// 모든 클라이언트에게 GamePlay 씬으로 전환 지시
+    /// </summary>
+    [Rpc(RpcSources.StateAuthority, RpcTargets.All)]
+    private void RPC_NotifySceneTransition(RpcInfo info = default)
+    {
+        Debug.Log("[GameStateManager] RPC_NotifySceneTransition received - transitioning to GamePlay scene");
+
+        // Why: MatchmakingManager에게 씬 전환 지시
+        if (MatchmakingManager.Instance != null)
+        {
+            MatchmakingManager.Instance.OnServerRequestedSceneTransition();
+        }
+        else
+        {
+            // Why: MatchmakingManager가 없으면 직접 씬 전환 (서버인 경우)
+            Debug.Log("[GameStateManager] MatchmakingManager not found, this is likely the server");
+        }
+    }
+
+    /// <summary>
+    /// 모든 클라이언트에게 매칭 완료 알림 (1초간 "매칭완료" 표시)
+    /// </summary>
+    [Rpc(RpcSources.StateAuthority, RpcTargets.All)]
+    private void RPC_NotifyMatchComplete(RpcInfo info = default)
+    {
+        Debug.Log("[GameStateManager] RPC_NotifyMatchComplete received - showing '매칭완료' text");
+
+        // Why: MatchmakingManager에게 매칭 완료 알림
+        if (MatchmakingManager.Instance != null)
+        {
+            MatchmakingManager.Instance.HandleMatchComplete();
+        }
+    }
+
+    /// <summary>
+    /// 모든 클라이언트에게 게임 시작 카운트다운 시작 알림
+    /// </summary>
+    [Rpc(RpcSources.StateAuthority, RpcTargets.All)]
+    private void RPC_StartGameCountdown(RpcInfo info = default)
+    {
+        Debug.Log("[GameStateManager] RPC_StartGameCountdown received - showing countdown UI");
+
+        // Why: LoadingUIManager에게 5초 카운트다운 시작 알림
+        if (LoadingUIManager.Instance != null)
+        {
+            LoadingUIManager.Instance.ShowCountdown(5f);
+        }
+        else
+        {
+            Debug.LogWarning("[GameStateManager] LoadingUIManager.Instance is null! Cannot show countdown.");
+        }
+    }
+
+    /// <summary>
     /// 모든 클라이언트에 킬로그 전송
     /// </summary>
     [Rpc(RpcSources.StateAuthority, RpcTargets.All)]
-    private void RPC_BroadcastKillLog(string killerName, string victimName, RpcInfo info = default)
+    private void RPC_BroadcastKillLog(string killerName, string victimName, string weaponID, RpcInfo info = default)
     {
         if (UIManager.Instance != null)
         {
-            UIManager.Instance.AddKillLog(killerName, victimName);
+            // Why: 무기 ID로 ItemDatabase에서 무기 데이터 조회하여 킬로그 아이콘 가져오기
+            Sprite weaponIcon = null;
+            if (!string.IsNullOrEmpty(weaponID))
+            {
+                var itemData = ItemDatabase.GetItem(weaponID);
+                if (itemData is WeaponData weaponData)
+                {
+                    weaponIcon = weaponData.KillLogIcon;
+                }
+            }
+            
+            UIManager.Instance.AddKillLog(killerName, victimName, weaponIcon);
         }
     }
 
@@ -644,6 +793,47 @@ public class GameStateManager : NetworkBehaviour
     #region Helper Methods
 
     /// <summary>
+    /// Session Properties에서 게임 상태를 복원합니다 (씬 전환 후 호출).
+    /// </summary>
+    private void RestoreStateFromSessionProperties()
+    {
+        if (!Runner.SessionInfo.IsValid || Runner.SessionInfo.Properties == null)
+        {
+            Debug.Log("[GameStateManager] Session Properties not available for restoration");
+            return;
+        }
+
+        var props = Runner.SessionInfo.Properties;
+
+        // MatchingTargetPlayers 복원
+        if (props.TryGetValue("MatchingTargetPlayers", out var targetProp))
+        {
+            int target = targetProp.IsInt ? (int)targetProp : 0;
+            if (target > 0)
+            {
+                TargetPlayerCount = target;
+                Debug.Log($"[GameStateManager] Restored TargetPlayerCount from Session Properties: {target}");
+            }
+        }
+
+        // CurrentMatchingMode 복원 → NetworkManager에 전달하여 맵 초기화
+        if (props.TryGetValue("CurrentMatchingMode", out var modeProp))
+        {
+            int mode = modeProp.IsInt ? (int)modeProp : 0;
+            if (mode > 0 && TargetPlayerCount > 0)
+            {
+                // Why: NetworkManager에 pending map init 설정
+                NetworkManager netManager = NetworkManager.GetManager(Runner);
+                if (netManager != null)
+                {
+                    netManager.SetPendingMapInit((GameMode)mode, TargetPlayerCount);
+                    Debug.Log($"[GameStateManager] Restored GameMode from Session Properties: {(GameMode)mode}");
+                }
+            }
+        }
+    }
+
+    /// <summary>
     /// 목표 플레이어 수에 도달했는지 확인하고 게임을 시작합니다.
     /// </summary>
     private void CheckAndStartGame()
@@ -679,6 +869,25 @@ public class GameStateManager : NetworkBehaviour
     /// </summary>
     private void StartGame()
     {
+        if (!HasStateAuthority || IsGameStarted) return;
+
+        Debug.Log("[GameStateManager] All players ready! Starting 5-second countdown...");
+
+        // Why: 모든 클라이언트에게 카운트다운 시작 알림
+        RPC_StartGameCountdown();
+
+        // Why: 5초 후 게임 실제 시작
+        _ = StartGameAfterCountdown();
+    }
+
+    /// <summary>
+    /// 5초 카운트다운 후 게임을 실제로 시작합니다.
+    /// </summary>
+    private async Task StartGameAfterCountdown()
+    {
+        // Why: 5초 대기 (카운트다운 시간)
+        await Task.Delay(5000);
+
         if (!HasStateAuthority || IsGameStarted) return;
 
         IsGameStarted = true;
@@ -805,30 +1014,6 @@ public class GameStateManager : NetworkBehaviour
         if (!HasStateAuthority) return;
         AlivePlayers++;
         CheckAndStartGame();
-    }
-
-    /// <summary>
-    /// 세션 예약 상태를 업데이트합니다 (서버만).
-    /// </summary>
-    private void UpdateSessionReservation(bool isReserved)
-    {
-        if (!HasStateAuthority) return;
-
-        try
-        {
-            if (Runner.SessionInfo.IsValid && Runner.SessionInfo.Properties != null)
-            {
-                Runner.SessionInfo.UpdateCustomProperties(new System.Collections.Generic.Dictionary<string, SessionProperty>
-                {
-                    { "IsReserved", isReserved }
-                });
-                Debug.Log($"[GameStateManager] Session reservation updated: IsReserved = {isReserved}");
-            }
-        }
-        catch (System.Exception ex)
-        {
-            Debug.LogWarning($"[GameStateManager] Failed to update reservation: {ex.Message}");
-        }
     }
 
     #endregion

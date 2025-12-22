@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
@@ -210,9 +210,9 @@ public class ItemSlotUI : MonoBehaviour, IBeginDragHandler, IDragHandler, IEndDr
         // Why: 아이템 타입과 슬롯이 맞는지 확인
         bool isValidSlot = itemData.ItemType switch
         {
-            EItemType.Weapon => _slotIndex == 0,    // 무기는 슬롯 0
-            EItemType.Armor => _slotIndex == 1,     // 방어구는 슬롯 1
-            EItemType.Usable => _slotIndex >= 2,    // 사용 아이템은 슬롯 2~4
+            ItemType.Weapon => _slotIndex == 0,    // 무기는 슬롯 0
+            ItemType.Armor => _slotIndex == 1,     // 방어구는 슬롯 1
+            ItemType.Usable => _slotIndex >= 2,    // 사용 아이템은 슬롯 2~4
             _ => false
         };
 

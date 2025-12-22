@@ -1,9 +1,9 @@
-using Fusion;
+﻿using Fusion;
 
 /// <summary>
 /// 게임 모드 열거형
 /// </summary>
-public enum EGameMode
+public enum GameMode
 {
     None,
     FourPlayer,     // 4인 매칭
@@ -15,7 +15,7 @@ public enum EGameMode
 /// <summary>
 /// 매칭 상태
 /// </summary>
-public enum EMatchmakingState
+public enum MatchmakingState
 {
     Idle,                   // 대기
     InitializingLobby,      // 로비 초기화 중
@@ -25,6 +25,7 @@ public enum EMatchmakingState
     JoiningCustomRoom,      // 커스텀 방 입장 중
     SelectingServer,        // 서버 선택 중
     ConnectingToServer,     // 서버 연결 중
+    WaitingForPlayers,      // Lobby에서 플레이어 대기 중
     Failed,                 // 실패
     Completed               // 완료
 }
@@ -35,11 +36,11 @@ public enum EMatchmakingState
 [System.Serializable]
 public struct ServerInfo
 {
-    public string ServerId;       // "aws-server-1", "aws-server-2" 등
-    public string IpAddress;      // EC2 Public IP (예: "3.37.177.239")
+    public string ServerId;       // "local-server", "server-1" 등
+    public string IpAddress;      // Public IP
     public int Port;              // 서버 포트 (기본: 27015)
     public string Region;         // "Asia", "US", "EU" 등
-    public int MaxPlayers;        // 동시 접속 가능한 최대 플레이어 수
+    // MaxPlayers는 ServerBuildConfig에서만 관리 (중복 제거)
 }
 
 /// <summary>
@@ -49,7 +50,7 @@ public struct ServerInfo
 public struct GameConnectionInfo
 {
     public string SessionName;     // Photon 세션 이름
-    public ServerInfo ServerInfo;  // AWS 서버 정보
-    public EGameMode GameMode;     // 게임 모드
+    public ServerInfo ServerInfo;  // 서버 정보
+    public GameMode GameMode;     // 게임 모드
     public int MaxPlayers;         // 최대 플레이어 수
 }

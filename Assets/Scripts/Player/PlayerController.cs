@@ -1,4 +1,4 @@
-using Fusion;
+﻿using Fusion;
 using UnityEngine;
 
 /// <summary>
@@ -83,12 +83,12 @@ public class PlayerController : NetworkBehaviour
             PlayerID = $"Player_{Object.InputAuthority.PlayerId}";
             MoveSpeedMultiplier = 1f;
 
-            // Why: NetworkRigidbody3D 동기화 이슈 방지를 위해 Rigidbody 위치를 Transform과 동기화
-            _rb.position = transform.position;
-            _rb.rotation = transform.rotation;
-
             // Why: 서버만 물리 시뮬레이션 실행
             _rb.isKinematic = false;
+
+            // Why: Rigidbody 초기화 (velocity 리셋)
+            _rb.linearVelocity = Vector3.zero;
+            _rb.angularVelocity = Vector3.zero;
         }
         else
         {
@@ -104,17 +104,22 @@ public class PlayerController : NetworkBehaviour
 
     public override void Despawned(NetworkRunner runner, bool hasState)
     {
-        if (UIManager.Instance != null)
+        try
         {
-            UIManager.Instance.UnregisterPlayerOverheadUI(transform);
+            if (UIManager.Instance != null)
+            {
+                UIManager.Instance.UnregisterPlayerOverheadUI(transform);
+            }
+        }
+        catch (System.Exception ex)
+        {
+            Debug.LogError($"[PlayerController] Error in Despawned: {ex}");
         }
     }
 
     public override void FixedUpdateNetwork()
     {
-        // Why: Runner가 종료 중이거나 실행 중이 아니면 처리하지 않음
         if (Runner == null || !Runner.IsRunning) return;
-
         if (!HasStateAuthority) return;
 
         if (GetInput(out NetworkInputData input))

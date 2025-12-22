@@ -1,10 +1,10 @@
-namespace ProjectVoid.Map
+﻿namespace ProjectVoid.Map
 {
     /// <summary>
     /// 청크 타입을 나타내는 열거형
     /// 문/벽 배치는 절차적으로 생성되며, 타입은 시각적/게임플레이 차별화 목적으로 사용됩니다.
     /// </summary>
-    public enum EChunkType : byte
+    public enum ChunkType : byte
     {
         /// <summary>
         /// 중앙 허브 청크 - 주요 전투 지역, 넓고 화려한 디자인

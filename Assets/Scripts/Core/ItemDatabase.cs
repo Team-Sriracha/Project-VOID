@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
@@ -14,7 +14,45 @@ public class ItemDatabase : MonoBehaviour
     /// <summary>
     /// ItemDatabase 싱글톤 인스턴스
     /// </summary>
-    public static ItemDatabase Instance => _instance;
+    /// <summary>
+    /// ItemDatabase 싱글톤 인스턴스 (Lazy Initialization 적용)
+    /// </summary>
+    public static ItemDatabase Instance
+    {
+        get
+        {
+            if (_instance == null)
+            {
+                _instance = FindFirstObjectByType<ItemDatabase>();
+                if (_instance == null)
+                {
+                    // Resources 폴더에서 프리팹 로드 시도
+                    var prefab = Resources.Load<ItemDatabase>("ItemDatabase");
+                    if (prefab != null)
+                    {
+                        var go = Instantiate(prefab);
+                        go.name = "ItemDatabase";
+                        _instance = go.GetComponent<ItemDatabase>();
+                        Debug.Log("[ItemDatabase] Resources에서 프리팹 로드하여 생성됨");
+                        if (_instance == null)
+                        {
+                            // 컴포넌트가 프리팹에 없는 경우
+                            Debug.LogError("[ItemDatabase] 프리팹에 ItemDatabase 컴포넌트가 없습니다!");
+                        }
+                    }
+                    else
+                    {
+                        // 프리팹도 없는 경우 빈 오브젝트라도 생성 (데이터는 비어있겠지만 null 참조는 방지)
+                        Debug.LogWarning("[ItemDatabase] 씬에 ItemDatabase가 없고 Resources/ItemDatabase 프리팹도 없습니다. 빈 ItemDatabase를 생성합니다. (데이터 누락 주의)");
+                        var go = new GameObject("ItemDatabase_AutoCreated");
+                        _instance = go.AddComponent<ItemDatabase>();
+                        _instance._isAutoCreated = true;
+                    }
+                }
+            }
+            return _instance;
+        }
+    }
 
     #endregion
 
@@ -42,6 +80,7 @@ public class ItemDatabase : MonoBehaviour
 
     private Dictionary<string, ItemData> _itemDict = new Dictionary<string, ItemData>();
     private List<ItemData> _cachedLootableItems;
+    private bool _isAutoCreated = false; // 자동 생성된 빈 껍데기인지 여부
 
     #endregion
 
@@ -57,7 +96,19 @@ public class ItemDatabase : MonoBehaviour
         }
         else
         {
-            Destroy(gameObject);
+            // Why: 기존 인스턴스가 자동 생성된 껍데기이고, 나는 씬에 배치된 진짜라면?
+            if (_instance._isAutoCreated && !this._isAutoCreated)
+            {
+                Debug.LogWarning("[ItemDatabase] 자동 생성된 임시 인스턴스를 파괴하고, 실제 데이터가 있는 인스턴스로 교체합니다.");
+                Destroy(_instance.gameObject);
+                _instance = this;
+                DontDestroyOnLoad(gameObject);
+                LoadAllItems();
+            }
+            else
+            {
+                Destroy(gameObject);
+            }
         }
     }
 

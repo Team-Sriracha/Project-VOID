@@ -1,9 +1,9 @@
-using UnityEngine;
+﻿using UnityEngine;
 
 /// <summary>
 /// 무기의 발사 모드를 정의합니다.
 /// </summary>
-public enum EFireMode
+public enum FireMode
 {
     SemiAuto,   // 단발 (클릭마다 1발)
     FullAuto    // 연사 (홀드 중 계속 발사)
@@ -29,7 +29,7 @@ public abstract class WeaponData : ItemData
 
     [Header("발사 모드")]
     [Tooltip("SemiAuto: 단발 (클릭마다 1발), FullAuto: 연사 (홀드 중 계속 발사)")]
-    [SerializeField] private EFireMode _fireMode = EFireMode.SemiAuto;
+    [SerializeField] private FireMode _fireMode = FireMode.SemiAuto;
 
     #endregion
 
@@ -63,7 +63,7 @@ public abstract class WeaponData : ItemData
     /// <summary>
     /// 무기의 발사 모드를 반환합니다.
     /// </summary>
-    public EFireMode FireMode => _fireMode;
+    public FireMode FireMode => _fireMode;
 
     // Why: ModelPrefab은 ItemData에서 상속받아 사용
 

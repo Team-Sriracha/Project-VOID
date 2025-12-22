@@ -1,4 +1,4 @@
-using Fusion;
+﻿using Fusion;
 using UnityEngine;
 using System.Collections.Generic;
 
@@ -200,12 +200,13 @@ public class LootBox : NetworkBehaviour, IDamageable
         IReadOnlyList<ItemData> itemList = ItemDatabase.GetLootableItems();
         if (itemList == null || itemList.Count == 0)
         {
-            Debug.LogWarning("[LootBox] 드랍 가능한 아이템이 없습니다!");
+            Debug.LogError($"[LootBox] 드랍 가능한 아이템이 없습니다! ItemDatabase Instance: {ItemDatabase.Instance}, Count: {itemList?.Count}");
             return;
         }
 
         // Why: 최소~최대 개수 사이의 랜덤 개수
         int spawnCount = Random.Range(_minItemCount, _maxItemCount + 1);
+        Debug.Log($"[LootBox] 스폰 시도: {spawnCount}개 아이템");
 
         // Why: 스폰 위치 (박스 위쪽)
         Vector3 spawnCenter = transform.position + Vector3.up * 1f;
@@ -217,35 +218,64 @@ public class LootBox : NetworkBehaviour, IDamageable
         {
             ItemData randomItem = itemList[Random.Range(0, itemList.Count)];
 
-            if (randomItem == null || randomItem.ModelPrefab == null)
+            if (randomItem == null)
+            {
+                Debug.LogWarning($"[LootBox] 랜덤 아이템 선택 실패 (null)");
                 continue;
+            }
+
+            if (randomItem.ModelPrefab == null)
+            {
+                Debug.LogWarning($"[LootBox] 아이템 {randomItem.ItemName}의 ModelPrefab이 null입니다!");
+                continue;
+            }
 
             // Why: 앞쪽 90도 범위로만 퍼지도록 (-45도 ~ +45도)
             float spreadAngle = Random.Range(-45f, 45f);
             Vector3 launchDirection = Quaternion.Euler(0, spreadAngle, 0) * forwardDir;
 
+            // Why: _spreadRadius 범위 내에서 좌우로 랜덤 오프셋 추가
+            Vector3 rightDir = transform.right;
+            float lateralOffset = Random.Range(-_spreadRadius, _spreadRadius);
+            Vector3 spawnOffset = rightDir * lateralOffset;
+
             // Why: 포물선 궤적을 위한 초기 속도 (앞으로 + 위로)
             Vector3 initialVelocity = launchDirection * _forwardSpeed + Vector3.up * _upwardSpeed;
 
-            // Why: onBeforeSpawned 콜백에서 ItemID와 CurrentVelocity 설정
-            NetworkObject itemObj = Runner.Spawn(
-                randomItem.ModelPrefab,
-                spawnCenter,
-                Quaternion.Euler(0, -90, 0),
-                onBeforeSpawned: (runner, obj) =>
-                {
-                    NetworkedItem networkedItem = obj.GetComponent<NetworkedItem>();
-                    if (networkedItem != null)
-                    {
-                        networkedItem.ItemID = randomItem.ItemID;
-                        networkedItem.CurrentVelocity = initialVelocity;
-                    }
-                }
-            );
-
-            if (itemObj != null)
+            try 
             {
-                Debug.Log($"[LootBox] 아이템 스폰: {randomItem.ItemName}, CurrentVelocity: {initialVelocity}");
+                // Why: onBeforeSpawned 콜백에서 ItemID와 CurrentVelocity 설정
+                NetworkObject itemObj = Runner.Spawn(
+                    randomItem.ModelPrefab,
+                    spawnCenter + spawnOffset, // Why: _spreadRadius로 좌우 퍼지기
+                    Quaternion.Euler(0, -90, 0),
+                    onBeforeSpawned: (runner, obj) =>
+                    {
+                        NetworkedItem networkedItem = obj.GetComponent<NetworkedItem>();
+                        if (networkedItem != null)
+                        {
+                            networkedItem.ItemID = randomItem.ItemID;
+                            networkedItem.CurrentVelocity = initialVelocity;
+                        }
+                        else
+                        {
+                            Debug.LogError($"[LootBox] Spawned object {obj.name} missing NetworkedItem component!");
+                        }
+                    }
+                );
+
+                if (itemObj != null)
+                {
+                    Debug.Log($"[LootBox] 아이템 스폰 성공: {randomItem.ItemName}, Velocity: {initialVelocity}");
+                }
+                else
+                {
+                    Debug.LogError($"[LootBox] Runner.Spawn returned null for {randomItem.ItemName}");
+                }
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogError($"[LootBox] Exception during Runner.Spawn: {e.Message}\n{e.StackTrace}");
             }
         }
     }

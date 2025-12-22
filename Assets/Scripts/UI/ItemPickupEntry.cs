@@ -1,4 +1,4 @@
-using Fusion;
+﻿using Fusion;
 using TMPro;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -332,13 +332,13 @@ public class ItemPickupEntry : MonoBehaviour, IPointerDownHandler, IBeginDragHan
     /// <summary>
     /// 아이템 타입에 맞는 슬롯 인덱스 반환
     /// </summary>
-    private int GetSlotForItemType(EItemType itemType)
+    private int GetSlotForItemType(ItemType itemType)
     {
         return itemType switch
         {
-            EItemType.Weapon => 0,   // 무기 슬롯
-            EItemType.Armor => 1,    // 방어구 슬롯
-            EItemType.Usable => GetFirstEmptyUsableSlot(), // 빈 사용 아이템 슬롯
+            ItemType.Weapon => 0,   // 무기 슬롯
+            ItemType.Armor => 1,    // 방어구 슬롯
+            ItemType.Usable => GetFirstEmptyUsableSlot(), // 빈 사용 아이템 슬롯
             _ => -1
         };
     }

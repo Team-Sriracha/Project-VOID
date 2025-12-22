@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using Fusion;
 using UnityEngine;
@@ -73,11 +73,29 @@ public class ItemPickupDetector : MonoBehaviour
     {
         _nearbyItems.Clear();
 
-        Collider[] colliders = Physics.OverlapSphere(
-            transform.position + Vector3.up * 1f,
-            _detectionRadius,
-            _itemLayer
-        );
+        Vector3 detectPos = transform.position + Vector3.up * 1f;
+        
+        // Why: Multi-Peer 환경에서 올바른 Physics 씬에서 OverlapSphere 수행
+        Collider[] colliders;
+        var runner = _networkObject?.Runner;
+        
+        // Why: Transform이 네트워크로 업데이트된 후 Collider 위치가 동기화되지 않을 수 있음
+        // Physics.SyncTransforms()를 호출하여 모든 Collider 위치를 Transform에 동기화
+        Physics.SyncTransforms();
+        
+        if (runner != null && runner.SceneManager != null && 
+            runner.SceneManager.TryGetPhysicsScene3D(out var physicsScene) && physicsScene.IsValid())
+        {
+            // Multi-Peer: 해당 Runner의 PhysicsScene에서 OverlapSphere
+            colliders = new Collider[32];
+            int hitCount = physicsScene.OverlapSphere(detectPos, _detectionRadius, colliders, _itemLayer, QueryTriggerInteraction.Collide);
+            System.Array.Resize(ref colliders, hitCount);
+        }
+        else
+        {
+            // Fallback: 기본 Physics.OverlapSphere (Single-Peer)
+            colliders = Physics.OverlapSphere(detectPos, _detectionRadius, _itemLayer);
+        }
 
         foreach (var col in colliders)
         {

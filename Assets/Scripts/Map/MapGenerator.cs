@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using UnityEngine;
@@ -23,6 +23,7 @@ namespace ProjectVoid.Map
         private System.Random _doorRandom;
         private int _currentChunkCount;
         private Stopwatch _generationTimer;
+        private readonly bool _isServer;
 
         #endregion
 
@@ -46,11 +47,47 @@ namespace ProjectVoid.Map
         /// </summary>
         public int MapHeight { get; private set; }
 
+        /// <summary>
+        /// 맵의 중심 위치를 월드 좌표로 반환합니다.
+        /// </summary>
+        public Vector3 GetMapCenter()
+        {
+            if (_placedChunks == null || _placedChunks.Count == 0)
+            {
+                return Vector3.zero;
+            }
+
+            // Why: 모든 청크의 그리드 위치에서 최소/최대 값 계산
+            Vector2Int min = new Vector2Int(int.MaxValue, int.MaxValue);
+            Vector2Int max = new Vector2Int(int.MinValue, int.MinValue);
+
+            foreach (var gridPos in _placedChunks.Keys)
+            {
+                min.x = Mathf.Min(min.x, gridPos.x);
+                min.y = Mathf.Min(min.y, gridPos.y);
+                max.x = Mathf.Max(max.x, gridPos.x);
+                max.y = Mathf.Max(max.y, gridPos.y);
+            }
+
+            // Why: 그리드 중심을 월드 좌표로 변환
+            Vector2 gridCenter = new Vector2(
+                (min.x + max.x) / 2f,
+                (min.y + max.y) / 2f
+            );
+
+            int chunkSize = _settings.ChunkSize;
+            return new Vector3(
+                gridCenter.x * chunkSize,
+                0f,
+                gridCenter.y * chunkSize
+            );
+        }
+
         #endregion
 
         #region Constructor
 
-        public MapGenerator(MapGenerationSettings settings, Transform parentTransform)
+        public MapGenerator(MapGenerationSettings settings, Transform parentTransform, bool isServer)
         {
             _settings = settings;
             _parentTransform = parentTransform;
@@ -59,6 +96,7 @@ namespace ProjectVoid.Map
             _chunkIndexMap = new Dictionary<Vector2Int, byte>();
             _activeChunks = new HashSet<Vector2Int>();
             _generationTimer = new Stopwatch();
+            _isServer = isServer;
         }
 
         #endregion
@@ -67,11 +105,23 @@ namespace ProjectVoid.Map
 
         public bool GenerateMap(int seed, MapLayoutTemplate templateToUse)
         {
+            if (!_isServer)
+            {
+                Debug.LogWarning("[MapGenerator] GenerateMap은 서버에서만 호출할 수 있습니다.");
+                return false;
+            }
+
             return TryGenerateMap(seed, templateToUse);
         }
 
         public NetworkChunkData[] ToNetworkArray()
         {
+            if (!_isServer)
+            {
+                Debug.LogWarning("[MapGenerator] ToNetworkArray는 서버에서만 호출할 수 있습니다.");
+                return System.Array.Empty<NetworkChunkData>();
+            }
+
             // Position 기준으로 정렬하여 순서 보장 (클라이언트와 동일한 순서)
             var sortedChunks = _placedChunks
                 .OrderBy(kvp => kvp.Key.y)
@@ -115,6 +165,12 @@ namespace ProjectVoid.Map
         /// </summary>
         public WallSegmentData[] ToWallSegmentArray()
         {
+            if (!_isServer)
+            {
+                Debug.LogWarning("[MapGenerator] ToWallSegmentArray는 서버에서만 호출할 수 있습니다.");
+                return System.Array.Empty<WallSegmentData>();
+            }
+
             var allSegments = new System.Collections.Generic.List<WallSegmentData>();
             var processedChunks = new System.Collections.Generic.HashSet<ChunkInstance>();
 
@@ -312,7 +368,7 @@ namespace ProjectVoid.Map
                          $"Type={networkData.Type}, Size={networkData.ChunkWidth}x{networkData.ChunkHeight}, GroupId={networkData.GroupId}");
 
                 // EChunkType을 EGridCell로 변환
-                EGridCell gridCellType = ConvertChunkTypeToGridCell(networkData.Type);
+                GridCell gridCellType = ConvertChunkTypeToGridCell(networkData.Type);
                 ChunkPrefabData[] chunkPool = GetChunkPoolForCell(gridCellType);
 
                 if (chunkPool == null || chunkPool.Length == 0)
@@ -369,7 +425,7 @@ namespace ProjectVoid.Map
                 }
 
                 ChunkInstance chunk = chunkInstances[segment.ChunkIndex];
-                EDirection direction = segment.GetDirection();
+                Direction direction = segment.GetDirection();
 
                 if (segment.IsDoor)
                 {
@@ -441,6 +497,30 @@ namespace ProjectVoid.Map
             }
         }
 
+        public void ResetAllChunks()
+        {
+            if (_placedChunks == null) return;
+
+            foreach (var kvp in _placedChunks)
+            {
+                var chunk = kvp.Value;
+                if (chunk != null && chunk.gameObject != null)
+                {
+                    chunk.gameObject.SetActive(true);
+                }
+            }
+
+            // 활성 청크 목록도 초기화 (모든 청크 활성화)
+            if (_activeChunks == null) _activeChunks = new HashSet<Vector2Int>();
+            _activeChunks.Clear();
+            foreach (var pos in _placedChunks.Keys)
+            {
+                _activeChunks.Add(pos);
+            }
+
+            Debug.Log($"[MapGenerator] 모든 청크 리셋 및 활성화 완료 ({_activeChunks.Count}/{_placedChunks.Count})");
+        }
+
 
 
         private bool PlaceChunksFromTemplate(MapLayoutTemplate template)
@@ -455,9 +535,9 @@ namespace ProjectVoid.Map
             {
                 for (int x = 0; x < template.Width; x++)
                 {
-                    EGridCell cellType = template.GetCell(x, y);
+                    GridCell cellType = template.GetCell(x, y);
 
-                    if (cellType == EGridCell.Empty)
+                    if (cellType == GridCell.Empty)
                         continue;
 
                     int groupId = template.GetChunkGroupId(x, y);
@@ -514,7 +594,7 @@ namespace ProjectVoid.Map
         {
             Vector2Int center = template.GetCenterPosition();
             HashSet<(Vector2Int, Vector2Int)> essentialConnections = CreateSpanningTree();
-            HashSet<(ChunkInstance, EDirection)> processedWalls = new HashSet<(ChunkInstance, EDirection)>();
+            HashSet<(ChunkInstance, Direction)> processedWalls = new HashSet<(ChunkInstance, Direction)>();
             HashSet<ChunkInstance> processedChunks = new HashSet<ChunkInstance>(); // 이미 처리한 청크 추적
 
             foreach (var kvp in _placedChunks)
@@ -530,7 +610,7 @@ namespace ProjectVoid.Map
                 // 청크의 대표 키 사용 (그룹 청크의 경우 왼쪽 아래 칸)
                 Vector2Int representativeKey = chunk.GridPosition;
 
-                foreach (EDirection direction in DirectionExtensions.GetAllDirections())
+                foreach (Direction direction in DirectionExtensions.GetAllDirections())
                 {
                     Vector2Int offset = direction.ToOffset();
 
@@ -544,7 +624,7 @@ namespace ProjectVoid.Map
                     if (hasAnyNeighbor)
                     {
                         // 중복 방지: North/East만 생성
-                        if (direction == EDirection.North || direction == EDirection.East)
+                        if (direction == Direction.North || direction == Direction.East)
                         {
                             // 셀별 이웃 정보를 기반으로 부분 벽 생성
                             GeneratePartialWalls(chunk, direction, cellHasNeighbor, representativeKey, offset, essentialConnections);
@@ -570,7 +650,7 @@ namespace ProjectVoid.Map
         /// <summary>
         /// South/West 방향에서 이웃이 없는 부분만 외벽을 생성합니다 (중복 방지용).
         /// </summary>
-        private void GenerateOuterWallsOnly(ChunkInstance chunk, EDirection direction, bool[] cellHasNeighbor)
+        private void GenerateOuterWallsOnly(ChunkInstance chunk, Direction direction, bool[] cellHasNeighbor)
         {
             if (cellHasNeighbor == null || cellHasNeighbor.Length == 0)
                 return;
@@ -599,7 +679,7 @@ namespace ProjectVoid.Map
         /// <summary>
         /// 셀별 이웃 정보를 기반으로 부분 벽을 생성합니다.
         /// </summary>
-        private void GeneratePartialWalls(ChunkInstance chunk, EDirection direction, bool[] cellHasNeighbor,
+        private void GeneratePartialWalls(ChunkInstance chunk, Direction direction, bool[] cellHasNeighbor,
                                           Vector2Int representativeKey, Vector2Int offset,
                                           HashSet<(Vector2Int, Vector2Int)> essentialConnections)
         {
@@ -620,7 +700,7 @@ namespace ProjectVoid.Map
                     // 이웃이 있는 셀: spanning tree 기반 문 생성 확률
                     Vector2Int cellOffset = offset;
                     // 방향이 East/West인 경우 cellIndex는 y오프셋, North/South인 경우 x오프셋
-                    if (direction == EDirection.North || direction == EDirection.South)
+                    if (direction == Direction.North || direction == Direction.South)
                     {
                         cellOffset = new Vector2Int(offset.x + cellIndex, offset.y);
                     }
@@ -723,7 +803,7 @@ namespace ProjectVoid.Map
             {
                 Vector2Int current = queue.Dequeue();
 
-                foreach (EDirection direction in DirectionExtensions.GetAllDirections())
+                foreach (Direction direction in DirectionExtensions.GetAllDirections())
                 {
                     Vector2Int neighbor = current + direction.ToOffset();
 
@@ -739,7 +819,7 @@ namespace ProjectVoid.Map
             return connections;
         }
 
-        private void GenerateWallOrDoor(ChunkInstance chunk, EDirection direction, bool hasDoor)
+        private void GenerateWallOrDoor(ChunkInstance chunk, Direction direction, bool hasDoor)
         {
             if (hasDoor)
             {
@@ -755,7 +835,7 @@ namespace ProjectVoid.Map
         /// 그룹 청크의 특정 방향에 외부 이웃이 있는지 확인하고, 각 셀별 이웃 정보를 반환
         /// </summary>
         /// <returns>(이웃 존재 여부, 셀별 이웃 마스크)</returns>
-        private (bool hasAnyNeighbor, bool[] cellHasNeighbor) CheckGroupChunkNeighborDetailed(MapLayoutTemplate template, ChunkInstance chunk, Vector2Int representativeKey, Vector2Int center, EDirection direction)
+        private (bool hasAnyNeighbor, bool[] cellHasNeighbor) CheckGroupChunkNeighborDetailed(MapLayoutTemplate template, ChunkInstance chunk, Vector2Int representativeKey, Vector2Int center, Direction direction)
         {
             int width = chunk.ChunkData != null ? chunk.ChunkData.ChunkWidth : 1;
             int height = chunk.ChunkData != null ? chunk.ChunkData.ChunkHeight : 1;
@@ -763,7 +843,7 @@ namespace ProjectVoid.Map
             Vector2Int offset = direction.ToOffset();
 
             // 해당 방향의 셀 개수
-            int cellCount = (direction == EDirection.North || direction == EDirection.South) ? width : height;
+            int cellCount = (direction == Direction.North || direction == Direction.South) ? width : height;
             bool[] cellHasNeighbor = new bool[cellCount];
             bool hasAnyNeighbor = false;
 
@@ -772,10 +852,10 @@ namespace ProjectVoid.Map
             {
                 Vector2Int cellOffset = direction switch
                 {
-                    EDirection.North => new Vector2Int(i, height - 1),  // 윗줄
-                    EDirection.South => new Vector2Int(i, 0),            // 아랫줄
-                    EDirection.East => new Vector2Int(width - 1, i),     // 오른쪽 열
-                    EDirection.West => new Vector2Int(0, i),             // 왼쪽 열
+                    Direction.North => new Vector2Int(i, height - 1),  // 윗줄
+                    Direction.South => new Vector2Int(i, 0),            // 아랫줄
+                    Direction.East => new Vector2Int(width - 1, i),     // 오른쪽 열
+                    Direction.West => new Vector2Int(0, i),             // 왼쪽 열
                     _ => Vector2Int.zero
                 };
 
@@ -792,8 +872,8 @@ namespace ProjectVoid.Map
                     continue;
                 }
 
-                EGridCell neighborType = template.GetCell(neighborTemplateX, neighborTemplateY);
-                if (neighborType != EGridCell.Empty)
+                GridCell neighborType = template.GetCell(neighborTemplateX, neighborTemplateY);
+                if (neighborType != GridCell.Empty)
                 {
                     // 그룹 내부인지 확인
                     if (_chunkGroupIds.TryGetValue(currentCell, out int currentGroupId) &&
@@ -818,24 +898,24 @@ namespace ProjectVoid.Map
             return (hasAnyNeighbor, cellHasNeighbor);
         }
 
-        private EGridCell ConvertChunkTypeToGridCell(EChunkType chunkType)
+        private GridCell ConvertChunkTypeToGridCell(ChunkType chunkType)
         {
             return chunkType switch
             {
-                EChunkType.Central => EGridCell.Central,
-                EChunkType.Normal => EGridCell.Normal,
-                EChunkType.Special => EGridCell.Special,
-                _ => EGridCell.Empty
+                ChunkType.Central => GridCell.Central,
+                ChunkType.Normal => GridCell.Normal,
+                ChunkType.Special => GridCell.Special,
+                _ => GridCell.Empty
             };
         }
 
-        private ChunkPrefabData[] GetChunkPoolForCell(EGridCell cellType)
+        private ChunkPrefabData[] GetChunkPoolForCell(GridCell cellType)
         {
             return cellType switch
             {
-                EGridCell.Central => _settings.CentralChunks,
-                EGridCell.Normal => _settings.NormalChunks,
-                EGridCell.Special => _settings.SpecialChunks,
+                GridCell.Central => _settings.CentralChunks,
+                GridCell.Normal => _settings.NormalChunks,
+                GridCell.Special => _settings.SpecialChunks,
                 _ => null
             };
         }
@@ -1009,7 +1089,7 @@ namespace ProjectVoid.Map
             return validIndices[0];
         }
 
-        private bool PlaceGroupChunk(MapLayoutTemplate template, Vector2Int startPos, int groupId, Vector2Int center, EGridCell cellType, out List<Vector2Int> groupCells)
+        private bool PlaceGroupChunk(MapLayoutTemplate template, Vector2Int startPos, int groupId, Vector2Int center, GridCell cellType, out List<Vector2Int> groupCells)
         {
             // 1. 인접한 같은 그룹 ID 셀만 찾기 (flood fill)
             groupCells = GetConnectedGroupCells(template, startPos, groupId);
@@ -1093,7 +1173,7 @@ namespace ProjectVoid.Map
                 connectedCells.Add(current);
 
                 // 4방향 인접 셀 확인
-                foreach (EDirection direction in DirectionExtensions.GetAllDirections())
+                foreach (Direction direction in DirectionExtensions.GetAllDirections())
                 {
                     Vector2Int offset = direction.ToOffset();
                     Vector2Int neighbor = new Vector2Int(current.x + offset.x, current.y + offset.y);
@@ -1163,7 +1243,7 @@ namespace ProjectVoid.Map
             {
                 Vector2Int current = queue.Dequeue();
 
-                foreach (EDirection direction in DirectionExtensions.GetAllDirections())
+                foreach (Direction direction in DirectionExtensions.GetAllDirections())
                 {
                     Vector2Int neighborPos = current + direction.ToOffset();
 
@@ -1211,7 +1291,7 @@ namespace ProjectVoid.Map
                 Vector2Int current = queue.Dequeue();
 
                 // 4방향 이웃 확인
-                foreach (EDirection direction in DirectionExtensions.GetAllDirections())
+                foreach (Direction direction in DirectionExtensions.GetAllDirections())
                 {
                     Vector2Int neighborPos = current + direction.ToOffset();
 

@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 
 /// <summary>
 /// 플레이어의 모든 스탯 (HP, 이동/대시 파라미터 등)을 보관하는 ScriptableObject입니다.

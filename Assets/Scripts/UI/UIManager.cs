@@ -1,15 +1,13 @@
-using System;
+﻿using System;
 using System.Collections;
 using System.Collections.Generic;
-using ProjectVoid.Network;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
-using UnityEngine.SceneManagement;
 
 /// <summary>
-/// 모든 게임 UI를 통합 관리하는 싱글톤
-/// 로비에서 이동된 매치메이킹 UI 로직을 포함합니다.
+/// 게임 UI를 관리하는 싱글톤 (전장 정보, 킬로그, 인벤토리, 오버헤드 UI 등)
+/// 로딩 화면 관련 기능은 LoadingUIManager로 이동됨
 /// </summary>
 public class UIManager : MonoBehaviour
 {
@@ -21,20 +19,6 @@ public class UIManager : MonoBehaviour
     #endregion
 
     #region Serialized Fields
-
-    [Header("매치메이킹")]
-    [SerializeField] private GameObject _matchmakingPanel;
-    [SerializeField] private TMP_Text _matchmakingStatusText;
-    [SerializeField] private TMP_Text _matchmakingPlayerCountText;
-    [SerializeField] private TMP_Text _roomCodeDisplayText;
-    [SerializeField] private Button _matchmakingCancelButton;
-    private bool _isCustomMode;
-
-    [Header("로딩 화면")]
-    [SerializeField] private GameObject _loadingPanel;
-    [SerializeField] private TextMeshProUGUI _loadingText;
-    [SerializeField] private Slider _loadingProgressBar;
-    [SerializeField] private TextMeshProUGUI _loadingTipText;
 
     [Header("전장 정보")]
     [SerializeField] private TextMeshProUGUI _alivePlayersText;
@@ -67,30 +51,10 @@ public class UIManager : MonoBehaviour
 
     #region Private Fields
 
-    private MatchmakingManager _matchmakingManager;
-
     private Queue<KillLogEntry> _killLogPool = new Queue<KillLogEntry>();
     private PlayerInventory _cachedInventory;
     private Canvas _canvas;
     private Dictionary<Transform, PlayerOverheadUI> _overheadUIs = new Dictionary<Transform, PlayerOverheadUI>();
-    
-    private bool _isLoading;
-    private Coroutine _loadingCoroutine;
-    private CanvasGroup _loadingCanvasGroup;
-
-    private readonly string[] _loadingTips = new string[]
-    {
-        "서버에서 맵을 생성하고 있습니다...",
-        "아이템을 배치하고 있습니다...",
-        "몬스터를 스폰하고 있습니다...",
-        "게임 준비 중..."
-    };
-
-    #endregion
-
-    #region Events
-
-    public event Action OnMapLoadingComplete;
 
     #endregion
 
@@ -108,197 +72,25 @@ public class UIManager : MonoBehaviour
             return;
         }
 
-        InitializeLoadingPanel();
         InitializeItemSlots();
     }
     
     private void Start()
     {
-        FindMatchmakingManager();
-        RegisterMatchmakingEventHandlers();
-
-        if (_matchmakingManager != null && _matchmakingManager.IsMatchmaking)
-        {
-            ShowMatchmakingPanel();
-        }
+        // Why: Late Joiner를 위해 기존 플레이어들의 OverheadUI 생성
+        RegisterExistingPlayersUI();
     }
-
-    private void OnDestroy()
-    {
-        UnregisterMatchmakingEventHandlers();
-    }
-
-    public bool IsMatchmakingPanelActive => _matchmakingPanel != null && _matchmakingPanel.activeSelf;
 
     private void Update()
     {
-        if (_matchmakingPanel != null && _matchmakingPanel.activeSelf)
-        {
-            // 매치메이킹 중일 때 지속적으로 UI 갱신 (폴링)
-            if (_matchmakingManager != null)
-            {
-                UpdateMatchmakingStatus(_matchmakingManager.StatusMessage);
-                OnPlayerCountChanged(_matchmakingManager.CurrentPlayers, _matchmakingManager.MaxPlayers);
-                if (_isCustomMode) UpdateRoomCodeDisplay(_matchmakingManager.RoomCode);
-            }
-            return;
-        }
-
         UpdateBattlefieldInfo();
         UpdatePlayerStats();
         UpdateInventoryUI();
     }
 
     #endregion
-    
-    #region Matchmaking Handlers
-
-    private void FindMatchmakingManager()
-    {
-        if (_matchmakingManager == null) _matchmakingManager = MatchmakingManager.Instance;
-        if (_matchmakingManager == null) _matchmakingManager = FindFirstObjectByType<MatchmakingManager>();
-        if (_matchmakingManager == null) Debug.LogError("[UIManager] MatchmakingManager not found!");
-    }
-
-    private void RegisterMatchmakingEventHandlers()
-    {
-        _matchmakingCancelButton?.onClick.AddListener(OnCancelMatchmakingClicked);
-
-        if (_matchmakingManager != null)
-        {
-            _matchmakingManager.OnMatchmakingUIUpdate += OnMatchmakingUpdate;
-            _matchmakingManager.OnCustomRoomCreated += OnCustomRoomCreated;
-            _matchmakingManager.OnRoomJoined += OnRoomJoined;
-            _matchmakingManager.OnMatchmakingFailed += OnMatchmakingFailed;
-            _matchmakingManager.OnMatchmakingCancelled += OnMatchmakingCancelled;
-            _matchmakingManager.OnPlayerCountChanged += OnPlayerCountChanged;
-            _matchmakingManager.OnMatchmakingSuccess += OnMatchmakingSuccess;
-        }
-    }
-
-    private void UnregisterMatchmakingEventHandlers()
-    {
-        if (_matchmakingManager != null)
-        {
-            _matchmakingManager.OnMatchmakingUIUpdate -= OnMatchmakingUpdate;
-            _matchmakingManager.OnCustomRoomCreated -= OnCustomRoomCreated;
-            _matchmakingManager.OnRoomJoined -= OnRoomJoined;
-            _matchmakingManager.OnMatchmakingFailed -= OnMatchmakingFailed;
-            _matchmakingManager.OnMatchmakingCancelled -= OnMatchmakingCancelled;
-            _matchmakingManager.OnPlayerCountChanged -= OnPlayerCountChanged;
-            _matchmakingManager.OnMatchmakingSuccess -= OnMatchmakingSuccess;
-        }
-    }
-
-    public void ShowMatchmakingPanel()
-    {
-        if (_matchmakingPanel == null || _matchmakingManager == null) return;
-        
-        _isCustomMode = _matchmakingManager.IsCustomGame;
-        SetupMatchmakingPanel(_isCustomMode);
-        
-        OnPlayerCountChanged(_matchmakingManager.CurrentPlayers, _matchmakingManager.MaxPlayers);
-        OnMatchmakingUpdate(_matchmakingManager.StatusMessage);
-        if(_isCustomMode) OnRoomJoined(_matchmakingManager.RoomCode);
-
-        _matchmakingPanel.SetActive(true);
-    }
-
-    private void HideMatchmakingPanel()
-    {
-        if (_matchmakingPanel != null) _matchmakingPanel.SetActive(false);
-    }
-    
-    private void OnMatchmakingSuccess()
-    {
-        HideMatchmakingPanel();
-        ShowLoadingAndWaitForMap();
-    }
-
-    private void OnCancelMatchmakingClicked()
-    {
-        _matchmakingManager?.CancelMatchmaking();
-    }
-
-    private void UpdateMatchmakingStatus(string status)
-    {
-        if (_matchmakingStatusText != null) _matchmakingStatusText.text = status;
-    }
-
-    private void UpdateRoomCodeDisplay(string roomCode)
-    {
-        Debug.Log($"[UIManager] UpdateRoomCodeDisplay called - roomCode: '{roomCode}', _isCustomMode: {_isCustomMode}, _roomCodeDisplayText != null: {_roomCodeDisplayText != null}");
-
-        if (_roomCodeDisplayText != null && _isCustomMode)
-        {
-            // Why: 방 코드를 ABC123 형식으로 표시 (특수문자 없음)
-            string formattedCode = RoomCodeGenerator.Format(roomCode);
-            _roomCodeDisplayText.text = $"방 코드 : {formattedCode}";
-            Debug.Log($"[UIManager] Room code displayed - Original: '{roomCode}', Formatted: '{formattedCode}'");
-        }
-        else
-        {
-            if (_roomCodeDisplayText == null)
-                Debug.LogWarning("[UIManager] _roomCodeDisplayText is null!");
-            if (!_isCustomMode)
-                Debug.LogWarning("[UIManager] _isCustomMode is false!");
-        }
-    }
-    
-    private void SetupMatchmakingPanel(bool showRoomCode)
-    {
-        if (_roomCodeDisplayText != null)
-            _roomCodeDisplayText.gameObject.SetActive(showRoomCode);
-    }
-
-    private void OnMatchmakingUpdate(string status) => UpdateMatchmakingStatus(status);
-
-    private void OnCustomRoomCreated(string roomCode)
-    {
-        Debug.Log($"[UIManager] OnCustomRoomCreated called with roomCode: '{roomCode}'");
-        UpdateRoomCodeDisplay(roomCode);
-        UpdateMatchmakingStatus("플레이어 대기 중...");
-    }
-
-    private void OnRoomJoined(string roomCode)
-    {
-        UpdateRoomCodeDisplay(roomCode);
-        UpdateMatchmakingStatus("게임 시작 대기 중...");
-    }
-
-    private void OnMatchmakingFailed(string errorMessage)
-    {
-        Debug.LogError($"[UIManager] Matchmaking failed: {errorMessage}");
-        UpdateMatchmakingStatus($"오류: {errorMessage}");
-        SceneManager.LoadScene("Lobby");
-    }
-
-    private void OnMatchmakingCancelled()
-    {
-        SceneManager.LoadScene("Lobby");
-    }
-
-    private void OnPlayerCountChanged(int current, int max)
-    {
-        if (_matchmakingPlayerCountText != null)
-        {
-            _matchmakingPlayerCountText.text = $"{current}/{max}";
-        }
-    }
-
-    #endregion
 
     #region Initialization
-
-    private void InitializeLoadingPanel()
-    {
-        if (_loadingPanel != null)
-        {
-            _loadingCanvasGroup = _loadingPanel.GetComponent<CanvasGroup>();
-            if (_loadingCanvasGroup == null) _loadingCanvasGroup = _loadingPanel.AddComponent<CanvasGroup>();
-            _loadingPanel.SetActive(false);
-        }
-    }
 
     private void InitializeItemSlots()
     {
@@ -424,6 +216,42 @@ public class UIManager : MonoBehaviour
 
     #region 오버헤드 UI
 
+    /// <summary>
+    /// 기존에 스폰된 모든 플레이어의 OverheadUI를 등록합니다 (Late Joiner용).
+    /// </summary>
+    private void RegisterExistingPlayersUI()
+    {
+        // Why: 약간의 지연 후 실행 (NetworkObject가 완전히 스폰될 때까지 대기)
+        StartCoroutine(RegisterExistingPlayersUICoroutine());
+    }
+
+    private IEnumerator RegisterExistingPlayersUICoroutine()
+    {
+        // Why: 1프레임 대기 (모든 NetworkObject가 스폰 완료될 때까지)
+        yield return null;
+
+        PlayerController[] allPlayers = FindObjectsByType<PlayerController>(FindObjectsSortMode.None);
+        int registeredCount = 0;
+
+        foreach (PlayerController player in allPlayers)
+        {
+            if (player != null && player.Object != null && player.Object.IsValid)
+            {
+                // Why: 이미 등록된 플레이어는 건너뛰기
+                if (!_overheadUIs.ContainsKey(player.transform))
+                {
+                    RegisterPlayerOverheadUI(player.transform);
+                    registeredCount++;
+                }
+            }
+        }
+
+        if (registeredCount > 0)
+        {
+            Debug.Log($"[UIManager] Late Joiner - {registeredCount}개 플레이어 OverheadUI 등록 완료");
+        }
+    }
+
     public void RegisterPlayerOverheadUI(Transform playerTransform)
     {
         if (_overheadUIPrefab == null) { Debug.LogError("[UIManager] OverheadUI 프리팹이 설정되지 않았습니다!"); return; }
@@ -442,141 +270,6 @@ public class UIManager : MonoBehaviour
         {
             if (ui != null) Destroy(ui.gameObject);
             _overheadUIs.Remove(playerTransform);
-        }
-    }
-
-    #endregion
-
-    #region 로딩 화면
-
-    public void ShowLoadingAndWaitForMap()
-    {
-        if (_isLoading) { Debug.LogWarning("[UIManager] 이미 로딩 중입니다."); return; }
-        if (_loadingPanel == null) { Debug.LogWarning("[UIManager] 로딩 패널이 설정되지 않았습니다."); return; }
-
-        _isLoading = true;
-        _loadingPanel.SetActive(true);
-        if (_loadingCanvasGroup != null) _loadingCanvasGroup.alpha = 1f;
-
-        UpdateLoadingProgress(0f);
-        UpdateLoadingText("서버 연결 중...");
-        UpdateLoadingTip(0);
-
-        if (_loadingCoroutine != null) StopCoroutine(_loadingCoroutine);
-        _loadingCoroutine = StartCoroutine(WaitForMapReadyCoroutine());
-    }
-
-    public void HideLoadingScreen()
-    {
-        _isLoading = false;
-        if (_loadingCoroutine != null) { StopCoroutine(_loadingCoroutine); _loadingCoroutine = null; }
-        if (_loadingPanel != null) _loadingPanel.SetActive(false);
-    }
-
-    private IEnumerator WaitForMapReadyCoroutine()
-    {
-        NetworkMapManager mapManager = null;
-        float progress = 0f;
-        float tipChangeInterval = 3f, lastTipChangeTime = Time.time;
-        int tipIndex = 0;
-        float checkInterval = 0.2f, minDisplayTime = 1.5f, startTime = Time.time;
-
-        UpdateLoadingProgress(0.1f);
-        UpdateLoadingText("맵 매니저 대기 중...");
-        
-        float maxWaitTime = 60f, waitTime = 0f;
-        while (mapManager == null && waitTime < maxWaitTime)
-        {
-            var managers = FindObjectsByType<NetworkMapManager>(FindObjectsSortMode.None);
-            foreach (var mgr in managers)
-            {
-                if (mgr.Runner != null && (mgr.Runner.IsClient || mgr.Runner.IsSharedModeMasterClient) && mgr.Object.IsValid)
-                {
-                    mapManager = mgr;
-                    break;
-                }
-            }
-            if (mapManager == null) { waitTime += checkInterval; yield return new WaitForSeconds(checkInterval); }
-        }
-
-        if (mapManager == null)
-        {
-            Debug.LogError("[UIManager] NetworkMapManager를 찾을 수 없습니다! 로딩 강제 완료");
-            FinishLoading();
-            yield break;
-        }
-
-        UpdateLoadingText("맵 생성 중...");
-
-        while (!mapManager.IsMapReady || !mapManager.IsReady())
-        {
-            progress = Mathf.Lerp(progress, 0.85f, Time.deltaTime * 0.5f);
-            UpdateLoadingProgress(0.2f + progress * 0.7f);
-
-            if (Time.time - lastTipChangeTime > tipChangeInterval)
-            {
-                tipIndex = (tipIndex + 1) % _loadingTips.Length;
-                UpdateLoadingTip(tipIndex);
-                lastTipChangeTime = Time.time;
-            }
-            yield return new WaitForSeconds(checkInterval);
-        }
-
-        UpdateLoadingText("게임 시작!");
-        UpdateLoadingProgress(1f);
-
-        float elapsedTime = Time.time - startTime;
-        if (elapsedTime < minDisplayTime) yield return new WaitForSeconds(minDisplayTime - elapsedTime);
-
-        FinishLoading();
-    }
-
-    private void FinishLoading()
-    {
-        OnMapLoadingComplete?.Invoke();
-        if (_loadingCoroutine != null) StopCoroutine(_loadingCoroutine);
-        _loadingCoroutine = StartCoroutine(FadeOutLoadingScreen());
-    }
-
-    private IEnumerator FadeOutLoadingScreen()
-    {
-        float fadeOutDuration = 0.5f;
-        if (_loadingCanvasGroup == null)
-        {
-            if (_loadingPanel != null) _loadingPanel.SetActive(false);
-            _isLoading = false;
-            yield break;
-        }
-
-        float elapsed = 0f, startAlpha = _loadingCanvasGroup.alpha;
-        while (elapsed < fadeOutDuration)
-        {
-            elapsed += Time.deltaTime;
-            _loadingCanvasGroup.alpha = Mathf.Lerp(startAlpha, 0f, elapsed / fadeOutDuration);
-            yield return null;
-        }
-
-        _loadingCanvasGroup.alpha = 0f;
-        if (_loadingPanel != null) _loadingPanel.SetActive(false);
-        _isLoading = false;
-        _loadingCoroutine = null;
-    }
-
-    private void UpdateLoadingProgress(float progress)
-    {
-        if (_loadingProgressBar != null) _loadingProgressBar.value = Mathf.Clamp01(progress);
-    }
-
-    private void UpdateLoadingText(string text)
-    {
-        if (_loadingText != null) _loadingText.text = text;
-    }
-
-    private void UpdateLoadingTip(int index)
-    {
-        if (_loadingTipText != null && _loadingTips != null && _loadingTips.Length > 0)
-        {
-            _loadingTipText.text = _loadingTips[index % _loadingTips.Length];
         }
     }
 

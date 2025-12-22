@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 
 namespace ProjectVoid.Map
 {
@@ -58,7 +58,7 @@ namespace ProjectVoid.Map
 
         [Header("레이아웃 데이터")]
         [Tooltip("그리드 데이터 (Width * Height 크기의 1D 배열)")]
-        [SerializeField] private EGridCell[] _gridData;
+        [SerializeField] private GridCell[] _gridData;
 
         [Tooltip("청크 그룹 ID (같은 ID를 가진 청크들은 하나의 큰 청크로 취급, 0=그룹 없음)")]
         [SerializeField] private int[] _chunkGroupIds;
@@ -127,22 +127,22 @@ namespace ProjectVoid.Map
         /// <summary>
         /// 특정 위치의 셀 타입을 반환합니다.
         /// </summary>
-        public EGridCell GetCell(int x, int y)
+        public GridCell GetCell(int x, int y)
         {
             if (!IsValidPosition(x, y))
             {
-                return EGridCell.Empty;
+                return GridCell.Empty;
             }
 
             if (_gridData == null || _gridData.Length == 0)
             {
-                return EGridCell.Empty;
+                return GridCell.Empty;
             }
 
             int index = GetIndex(x, y);
             if (index >= _gridData.Length)
             {
-                return EGridCell.Empty;
+                return GridCell.Empty;
             }
 
             return _gridData[index];
@@ -151,7 +151,7 @@ namespace ProjectVoid.Map
         /// <summary>
         /// 특정 위치의 셀 타입을 설정합니다.
         /// </summary>
-        public void SetCell(int x, int y, EGridCell cellType)
+        public void SetCell(int x, int y, GridCell cellType)
         {
             if (!IsValidPosition(x, y))
             {
@@ -239,7 +239,7 @@ namespace ProjectVoid.Map
             int count = 0;
             foreach (var cell in _gridData)
             {
-                if (cell != EGridCell.Empty)
+                if (cell != GridCell.Empty)
                     count++;
             }
             return count;
@@ -352,7 +352,7 @@ namespace ProjectVoid.Map
                 int nx = x + dx[i];
                 int ny = y + dy[i];
 
-                if (!IsValidPosition(nx, ny) || GetCell(nx, ny) == EGridCell.Empty)
+                if (!IsValidPosition(nx, ny) || GetCell(nx, ny) == GridCell.Empty)
                 {
                     return true;
                 }
@@ -378,17 +378,17 @@ namespace ProjectVoid.Map
         /// </summary>
         private void InitializeGrid()
         {
-            _gridData = new EGridCell[_width * _height];
+            _gridData = new GridCell[_width * _height];
 
             // 모든 셀을 Empty로 초기화
             for (int i = 0; i < _gridData.Length; i++)
             {
-                _gridData[i] = EGridCell.Empty;
+                _gridData[i] = GridCell.Empty;
             }
 
             // 중앙에 Central 청크 배치
             Vector2Int center = GetCenterPosition();
-            SetCell(center.x, center.y, EGridCell.Central);
+            SetCell(center.x, center.y, GridCell.Central);
 
             // 청크 그룹도 함께 초기화
             InitializeChunkGroups();
@@ -473,15 +473,15 @@ namespace ProjectVoid.Map
             {
                 for (int x = 0; x < _width; x++)
                 {
-                    EGridCell cell = GetCell(x, y);
+                    GridCell cell = GetCell(x, y);
                     int groupId = GetChunkGroupId(x, y);
 
                     char c = cell switch
                     {
-                        EGridCell.Empty => '.',
-                        EGridCell.Central => 'C',
-                        EGridCell.Normal => 'N',
-                        EGridCell.Special => 'S',
+                        GridCell.Empty => '.',
+                        GridCell.Central => 'C',
+                        GridCell.Normal => 'N',
+                        GridCell.Special => 'S',
                         _ => '?'
                     };
 

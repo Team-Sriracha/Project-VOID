@@ -1,4 +1,4 @@
-using Fusion;
+﻿using Fusion;
 using UnityEngine;
 
 /// <summary>
@@ -104,12 +104,12 @@ public class PlayerAimController : NetworkBehaviour
             // Why: FireMode에 따라 발사 로직 분기
             if (_weapon != null && LastValidAimDirection.sqrMagnitude > 0.01f)
             {
-                EFireMode fireMode = _weapon.CurrentWeaponData?.FireMode ?? EFireMode.SemiAuto;
+                FireMode fireMode = _weapon.CurrentWeaponData?.FireMode ?? FireMode.SemiAuto;
 
                 bool shouldFire = fireMode switch
                 {
-                    EFireMode.SemiAuto => input.FirePressed,   // 단발: 클릭할 때마다
-                    EFireMode.FullAuto => input.AttackHeld,    // 연사: 홀드 중 계속
+                    FireMode.SemiAuto => input.FirePressed,   // 단발: 클릭할 때마다
+                    FireMode.FullAuto => input.AttackHeld,    // 연사: 홀드 중 계속
                     _ => input.FirePressed
                 };
 

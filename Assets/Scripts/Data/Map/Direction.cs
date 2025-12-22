@@ -1,11 +1,11 @@
-using UnityEngine;
+﻿using UnityEngine;
 
 namespace ProjectVoid.Map
 {
     /// <summary>
     /// 4방향을 나타내는 열거형
     /// </summary>
-    public enum EDirection
+    public enum Direction
     {
         None = 0,
         North = 1,
@@ -15,7 +15,7 @@ namespace ProjectVoid.Map
     }
 
     /// <summary>
-    /// EDirection 확장 메서드
+    /// Direction 확장 메서드
     /// </summary>
     public static class DirectionExtensions
     {
@@ -33,14 +33,14 @@ namespace ProjectVoid.Map
         /// <summary>
         /// 방향을 Vector2Int 오프셋으로 변환합니다.
         /// </summary>
-        public static Vector2Int ToOffset(this EDirection direction)
+        public static Vector2Int ToOffset(this Direction direction)
         {
             return direction switch
             {
-                EDirection.North => NORTH_OFFSET,
-                EDirection.East => EAST_OFFSET,
-                EDirection.South => SOUTH_OFFSET,
-                EDirection.West => WEST_OFFSET,
+                Direction.North => NORTH_OFFSET,
+                Direction.East => EAST_OFFSET,
+                Direction.South => SOUTH_OFFSET,
+                Direction.West => WEST_OFFSET,
                 _ => Vector2Int.zero
             };
         }
@@ -48,43 +48,43 @@ namespace ProjectVoid.Map
         /// <summary>
         /// 반대 방향을 반환합니다.
         /// </summary>
-        public static EDirection GetOpposite(this EDirection direction)
+        public static Direction GetOpposite(this Direction direction)
         {
             return direction switch
             {
-                EDirection.North => EDirection.South,
-                EDirection.East => EDirection.West,
-                EDirection.South => EDirection.North,
-                EDirection.West => EDirection.East,
-                _ => EDirection.None
+                Direction.North => Direction.South,
+                Direction.East => Direction.West,
+                Direction.South => Direction.North,
+                Direction.West => Direction.East,
+                _ => Direction.None
             };
         }
 
         /// <summary>
         /// 모든 유효한 방향을 반환합니다.
         /// </summary>
-        public static EDirection[] GetAllDirections()
+        public static Direction[] GetAllDirections()
         {
             return new[]
             {
-                EDirection.North,
-                EDirection.East,
-                EDirection.South,
-                EDirection.West
+                Direction.North,
+                Direction.East,
+                Direction.South,
+                Direction.West
             };
         }
 
         /// <summary>
         /// 비트마스크에서 활성화된 방향들을 추출합니다.
         /// </summary>
-        public static EDirection[] GetActiveDirections(byte doorMask)
+        public static Direction[] GetActiveDirections(byte doorMask)
         {
-            var directions = new System.Collections.Generic.List<EDirection>();
+            var directions = new System.Collections.Generic.List<Direction>();
 
-            if ((doorMask & (byte)EDirection.North) != 0) directions.Add(EDirection.North);
-            if ((doorMask & (byte)EDirection.East) != 0) directions.Add(EDirection.East);
-            if ((doorMask & (byte)EDirection.South) != 0) directions.Add(EDirection.South);
-            if ((doorMask & (byte)EDirection.West) != 0) directions.Add(EDirection.West);
+            if ((doorMask & (byte)Direction.North) != 0) directions.Add(Direction.North);
+            if ((doorMask & (byte)Direction.East) != 0) directions.Add(Direction.East);
+            if ((doorMask & (byte)Direction.South) != 0) directions.Add(Direction.South);
+            if ((doorMask & (byte)Direction.West) != 0) directions.Add(Direction.West);
 
             return directions.ToArray();
         }
@@ -92,7 +92,7 @@ namespace ProjectVoid.Map
         /// <summary>
         /// 특정 방향이 비트마스크에 포함되어 있는지 확인합니다.
         /// </summary>
-        public static bool HasDirection(byte doorMask, EDirection direction)
+        public static bool HasDirection(byte doorMask, Direction direction)
         {
             return (doorMask & (byte)direction) != 0;
         }

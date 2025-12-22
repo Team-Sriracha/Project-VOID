@@ -1,4 +1,4 @@
-using TMPro;
+﻿using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.SceneManagement;
@@ -34,6 +34,13 @@ public class LobbyUI : MonoBehaviour
     [Header("Join Room Sub Panel")]
     [SerializeField] private TMP_InputField _roomCodeInputField;
 
+    [Header("Matchmaking Panel")]
+    [SerializeField] private GameObject _matchmakingPanel;
+    [SerializeField] private TMP_Text _matchmakingStatusText;
+    [SerializeField] private TMP_Text _matchmakingPlayerCountText;
+    [SerializeField] private TMP_Text _matchmakingRoomCodeText;
+    [SerializeField] private Button _matchmakingCancelButton;
+
     [Header("References")]
     [SerializeField] private MatchmakingManager _matchmakingManager;
 
@@ -49,18 +56,19 @@ public class LobbyUI : MonoBehaviour
 
     #region UI State
 
-    private enum EUIState { Main, CustomRoom }
-    private enum ECustomRoomMode { None, Create, Join }
-    private enum EGameModeOption { FourPlayer = 0, EightPlayer = 1, CustomRoom = 2, PracticeRange = 3 }
+    private enum UIState { Main, CustomRoom }
+    private enum CustomRoomMode { None, Create, Join }
+    private enum GameModeOption { FourPlayer = 0, EightPlayer = 1, CustomRoom = 2, PracticeRange = 3 }
 
-    private EUIState _currentUIState = EUIState.Main;
-    private ECustomRoomMode _customRoomMode = ECustomRoomMode.None;
+    private UIState _currentUIState = UIState.Main;
+    private CustomRoomMode _customRoomMode = CustomRoomMode.None;
 
     #endregion
 
     #region Private Fields
 
     private int _selectedPlayerCount = 4;
+    private bool _isCustomMode;
 
     #endregion
 
@@ -71,7 +79,27 @@ public class LobbyUI : MonoBehaviour
         FindMatchmakingManager();
         InitializeUI();
         RegisterEventHandlers();
-        SetUIState(EUIState.Main);
+        SetUIState(UIState.Main);
+
+        // Why: 매칭 패널 초기화
+        if (_matchmakingPanel != null)
+        {
+            _matchmakingPanel.SetActive(false);
+        }
+    }
+
+    private void Update()
+    {
+        // Why: 매칭 중일 때 UI 갱신
+        if (_matchmakingPanel != null && _matchmakingPanel.activeSelf && _matchmakingManager != null)
+        {
+            UpdateMatchmakingUI();
+        }
+    }
+
+    private void OnDestroy()
+    {
+        UnregisterEventHandlers();
     }
 
     #endregion
@@ -105,17 +133,47 @@ public class LobbyUI : MonoBehaviour
 
     private void RegisterEventHandlers()
     {
+        // UI 버튼 이벤트
         _startButton?.onClick.AddListener(OnStartClicked);
         _gameModeDropdown?.onValueChanged.AddListener(OnGameModeChanged);
         _createRoomButton?.onClick.AddListener(OnCreateRoomModeClicked);
         _joinRoomButton?.onClick.AddListener(OnJoinRoomModeClicked);
         _playerCountLeftButton?.onClick.AddListener(OnPlayerCountLeftClicked);
         _playerCountRightButton?.onClick.AddListener(OnPlayerCountRightClicked);
-        
+        _matchmakingCancelButton?.onClick.AddListener(OnCancelMatchmakingClicked);
+
         if (_roomCodeInputField != null)
         {
             _roomCodeInputField.characterLimit = 6; // ABC123 형식 (하이픈 없음)
             _roomCodeInputField.onValueChanged.AddListener(OnRoomCodeInputChanged);
+        }
+
+        // MatchmakingManager 이벤트
+        if (_matchmakingManager != null)
+        {
+            _matchmakingManager.OnMatchmakingUIUpdate += OnMatchmakingStatusUpdate;
+            _matchmakingManager.OnCustomRoomCreated += OnCustomRoomCreated;
+            _matchmakingManager.OnRoomJoined += OnRoomJoined;
+            _matchmakingManager.OnMatchmakingFailed += OnMatchmakingFailed;
+            _matchmakingManager.OnMatchmakingCancelled += OnMatchmakingCancelled;
+            _matchmakingManager.OnPlayerCountChanged += OnPlayerCountChanged;
+            _matchmakingManager.OnMatchmakingSuccess += OnMatchmakingSuccess;
+            _matchmakingManager.OnAllPlayersReady += OnAllPlayersReady;
+        }
+    }
+
+    private void UnregisterEventHandlers()
+    {
+        if (_matchmakingManager != null)
+        {
+            _matchmakingManager.OnMatchmakingUIUpdate -= OnMatchmakingStatusUpdate;
+            _matchmakingManager.OnCustomRoomCreated -= OnCustomRoomCreated;
+            _matchmakingManager.OnRoomJoined -= OnRoomJoined;
+            _matchmakingManager.OnMatchmakingFailed -= OnMatchmakingFailed;
+            _matchmakingManager.OnMatchmakingCancelled -= OnMatchmakingCancelled;
+            _matchmakingManager.OnPlayerCountChanged -= OnPlayerCountChanged;
+            _matchmakingManager.OnMatchmakingSuccess -= OnMatchmakingSuccess;
+            _matchmakingManager.OnAllPlayersReady -= OnAllPlayersReady;
         }
     }
 
@@ -123,14 +181,14 @@ public class LobbyUI : MonoBehaviour
 
     #region UI State Management
 
-    private void SetUIState(EUIState newState)
+    private void SetUIState(UIState newState)
     {
         _mainPanel?.SetActive(true);
-        _customRoomPanel?.SetActive(newState == EUIState.CustomRoom);
+        _customRoomPanel?.SetActive(newState == UIState.CustomRoom);
 
-        if (newState != EUIState.CustomRoom)
+        if (newState != UIState.CustomRoom)
         {
-            _customRoomMode = ECustomRoomMode.None;
+            _customRoomMode = CustomRoomMode.None;
             UpdateCustomRoomSubPanels();
         }
 
@@ -139,10 +197,10 @@ public class LobbyUI : MonoBehaviour
 
     private void UpdateCustomRoomSubPanels()
     {
-        _createRoomSubPanel?.SetActive(_customRoomMode == ECustomRoomMode.Create);
-        _joinRoomSubPanel?.SetActive(_customRoomMode == ECustomRoomMode.Join);
+        _createRoomSubPanel?.SetActive(_customRoomMode == CustomRoomMode.Create);
+        _joinRoomSubPanel?.SetActive(_customRoomMode == CustomRoomMode.Join);
 
-        bool showModeButtons = _customRoomMode == ECustomRoomMode.None;
+        bool showModeButtons = _customRoomMode == CustomRoomMode.None;
         _customRoomTitleText?.gameObject.SetActive(showModeButtons);
         _createRoomButton?.gameObject.SetActive(showModeButtons);
         _joinRoomButton?.gameObject.SetActive(showModeButtons);
@@ -154,8 +212,8 @@ public class LobbyUI : MonoBehaviour
 
     private void OnGameModeChanged(int index)
     {
-        var selectedMode = (EGameModeOption)index;
-        SetUIState(selectedMode == EGameModeOption.CustomRoom ? EUIState.CustomRoom : EUIState.Main);
+        var selectedMode = (GameModeOption)index;
+        SetUIState(selectedMode == GameModeOption.CustomRoom ? UIState.CustomRoom : UIState.Main);
     }
 
     private void OnStartClicked()
@@ -177,15 +235,16 @@ public class LobbyUI : MonoBehaviour
 
         Debug.Log($"[LobbyUI] MatchmakingManager State: {_matchmakingManager.CurrentState}");
 
-        if (_currentUIState == EUIState.CustomRoom)
+        if (_currentUIState == UIState.CustomRoom)
         {
-            if (_customRoomMode == ECustomRoomMode.Create)
+            if (_customRoomMode == CustomRoomMode.Create)
             {
                 Debug.Log($"[LobbyUI] Creating custom room with {_selectedPlayerCount} players");
-                _matchmakingManager.CreateCustomRoom(_selectedPlayerCount);
-                SceneManager.LoadScene(GAMEPLAY_SCENE_NAME);
+                // Why: 설정만 저장하고 Matching 씬에서 실제 접속
+                _matchmakingManager.PrepareCustomRoom(_selectedPlayerCount);
+                NavigateToMatchmakingScene();
             }
-            else if (_customRoomMode == ECustomRoomMode.Join)
+            else if (_customRoomMode == CustomRoomMode.Join)
             {
                 string roomCode = _roomCodeInputField?.text;
                 if (string.IsNullOrEmpty(roomCode) || roomCode.Length != 6)
@@ -194,40 +253,189 @@ public class LobbyUI : MonoBehaviour
                     return;
                 }
                 Debug.Log($"[LobbyUI] Joining custom room with code: {roomCode}");
-                _matchmakingManager.JoinCustomRoom(roomCode);
-                SceneManager.LoadScene(GAMEPLAY_SCENE_NAME);
+                // Why: 설정만 저장하고 Matching 씬에서 실제 접속
+                _matchmakingManager.PrepareJoinRoom(roomCode);
+                NavigateToMatchmakingScene();
             }
             return;
         }
 
-        var selectedMode = (EGameModeOption)_gameModeDropdown.value;
+        var selectedMode = (GameModeOption)_gameModeDropdown.value;
         Debug.Log($"[LobbyUI] Selected mode: {selectedMode}");
-        bool shouldStart = true;
 
         switch (selectedMode)
         {
-            case EGameModeOption.FourPlayer:
-                Debug.Log("[LobbyUI] Starting 4-player matchmaking");
-                _matchmakingManager.StartMatchmaking(EGameMode.FourPlayer);
+            case GameModeOption.FourPlayer:
+                Debug.Log("[LobbyUI] Preparing 4-player matchmaking");
+                _matchmakingManager.PrepareMatchmaking(GameMode.FourPlayer);
+                NavigateToMatchmakingScene();
                 break;
-            case EGameModeOption.EightPlayer:
-                Debug.Log("[LobbyUI] Starting 8-player matchmaking");
-                _matchmakingManager.StartMatchmaking(EGameMode.EightPlayer);
+            case GameModeOption.EightPlayer:
+                Debug.Log("[LobbyUI] Preparing 8-player matchmaking");
+                _matchmakingManager.PrepareMatchmaking(GameMode.EightPlayer);
+                NavigateToMatchmakingScene();
                 break;
-            case EGameModeOption.PracticeRange:
-                Debug.Log("[LobbyUI] Entering practice range");
-                _matchmakingManager.EnterPracticeRange();
+            case GameModeOption.PracticeRange:
+                Debug.Log("[LobbyUI] Preparing practice range");
+                _matchmakingManager.PrepareMatchmaking(GameMode.PracticeRange);
+                NavigateToMatchmakingScene();
                 break;
             default:
                 Debug.LogWarning($"[LobbyUI] Invalid mode selected: {selectedMode}");
-                shouldStart = false;
                 break;
         }
+    }
 
-        if (shouldStart)
+    /// <summary>
+    /// Matchmaking 씬으로 이동합니다. 실제 서버 접속은 Matchmaking 씬에서 수행됩니다.
+    /// </summary>
+    private void NavigateToMatchmakingScene()
+    {
+        Debug.Log("[LobbyUI] Navigating to Matchmaking scene...");
+        SceneManager.LoadScene("Matchmaking");
+    }
+
+    #endregion
+
+    #region Matchmaking Event Handlers
+
+    private void OnCancelMatchmakingClicked()
+    {
+        _matchmakingManager?.CancelMatchmaking();
+    }
+
+    private void OnMatchmakingStatusUpdate(string status)
+    {
+        if (_matchmakingStatusText != null)
         {
-            Debug.Log($"[LobbyUI] Loading {GAMEPLAY_SCENE_NAME} scene");
-            SceneManager.LoadScene(GAMEPLAY_SCENE_NAME);
+            _matchmakingStatusText.text = status;
+        }
+    }
+
+    private void OnCustomRoomCreated(string roomCode)
+    {
+        Debug.Log($"[LobbyUI] Custom room created - RoomCode: {roomCode}");
+        _isCustomMode = true;
+        UpdateRoomCodeDisplay(roomCode);
+        if (_matchmakingStatusText != null)
+        {
+            _matchmakingStatusText.text = "플레이어 대기 중...";
+        }
+    }
+
+    private void OnRoomJoined(string roomCode)
+    {
+        Debug.Log($"[LobbyUI] Room joined - RoomCode: {roomCode}");
+        _isCustomMode = true;
+        UpdateRoomCodeDisplay(roomCode);
+        if (_matchmakingStatusText != null)
+        {
+            _matchmakingStatusText.text = "게임 시작 대기 중...";
+        }
+    }
+
+    private void OnMatchmakingFailed(string errorMessage)
+    {
+        Debug.LogError($"[LobbyUI] Matchmaking failed: {errorMessage}");
+        if (_matchmakingStatusText != null)
+        {
+            _matchmakingStatusText.text = $"오류: {errorMessage}";
+        }
+        HideMatchmakingPanel();
+    }
+
+    private void OnMatchmakingCancelled()
+    {
+        Debug.Log("[LobbyUI] Matchmaking cancelled");
+        HideMatchmakingPanel();
+    }
+
+    private void OnPlayerCountChanged(int current, int max)
+    {
+        if (_matchmakingPlayerCountText != null)
+        {
+            _matchmakingPlayerCountText.text = $"{current}/{max}";
+        }
+    }
+
+    private void OnMatchmakingSuccess()
+    {
+        Debug.Log("[LobbyUI] Matchmaking success - keeping panel visible for GamePlay scene");
+        // Why: 매칭 성공 시에도 패널 유지 (GamePlay 씬으로 전환됨)
+    }
+    
+    private void OnAllPlayersReady()
+    {
+        Debug.Log("[LobbyUI] All players ready - hiding matchmaking panel before scene transition");
+        HideMatchmakingPanel();
+    }
+
+    #endregion
+
+    #region Matchmaking UI
+
+    private void ShowMatchmakingPanel()
+    {
+        if (_matchmakingPanel == null) return;
+
+        _isCustomMode = _matchmakingManager != null && _matchmakingManager.IsCustomGame;
+
+        // Why: 방 코드 표시 여부 설정
+        if (_matchmakingRoomCodeText != null)
+        {
+            _matchmakingRoomCodeText.gameObject.SetActive(_isCustomMode);
+        }
+
+        // Why: 메인 패널 숨기기
+        if (_mainPanel != null)
+        {
+            _mainPanel.SetActive(false);
+        }
+
+        _matchmakingPanel.SetActive(true);
+    }
+
+    private void HideMatchmakingPanel()
+    {
+        if (_matchmakingPanel != null)
+        {
+            _matchmakingPanel.SetActive(false);
+        }
+
+        // Why: 메인 패널 다시 표시
+        if (_mainPanel != null)
+        {
+            _mainPanel.SetActive(true);
+        }
+    }
+
+    private void UpdateMatchmakingUI()
+    {
+        if (_matchmakingManager == null) return;
+
+        // Why: 상태 및 플레이어 수 갱신
+        if (_matchmakingStatusText != null)
+        {
+            _matchmakingStatusText.text = _matchmakingManager.StatusMessage;
+        }
+
+        if (_matchmakingPlayerCountText != null)
+        {
+            _matchmakingPlayerCountText.text = $"{_matchmakingManager.CurrentPlayers}/{_matchmakingManager.MaxPlayers}";
+        }
+
+        if (_isCustomMode && _matchmakingRoomCodeText != null)
+        {
+            UpdateRoomCodeDisplay(_matchmakingManager.RoomCode);
+        }
+    }
+
+    private void UpdateRoomCodeDisplay(string roomCode)
+    {
+        if (_matchmakingRoomCodeText != null && !string.IsNullOrEmpty(roomCode))
+        {
+            string formattedCode = RoomCodeGenerator.Format(roomCode);
+            _matchmakingRoomCodeText.text = $"방 코드: {formattedCode}";
         }
     }
 
@@ -237,13 +445,13 @@ public class LobbyUI : MonoBehaviour
 
     private void OnCreateRoomModeClicked()
     {
-        _customRoomMode = ECustomRoomMode.Create;
+        _customRoomMode = CustomRoomMode.Create;
         UpdateCustomRoomSubPanels();
     }
 
     private void OnJoinRoomModeClicked()
     {
-        _customRoomMode = ECustomRoomMode.Join;
+        _customRoomMode = CustomRoomMode.Join;
         if (_roomCodeInputField != null) _roomCodeInputField.text = "";
         UpdateCustomRoomSubPanels();
     }

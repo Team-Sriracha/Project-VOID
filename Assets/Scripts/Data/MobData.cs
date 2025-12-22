@@ -1,9 +1,9 @@
-using UnityEngine;
+﻿using UnityEngine;
 
 /// <summary>
 /// 몬스터의 상태를 정의하는 열거형
 /// </summary>
-public enum EMonsterState
+public enum MonsterState
 {
     Idle,      // 스폰 위치에서 대기
     Alert,     // 피격 후 놀라는 애니메이션, 회전
@@ -51,6 +51,9 @@ public class MobData : ScriptableObject
     [Tooltip("공격 쿨다운 (초)")]
     [SerializeField] private float _attackCooldown = 1.5f;
 
+    [Tooltip("공격 애니메이션 지속 시간 (초) - 이 시간 후에 데미지 적용")]
+    [SerializeField] private float _attackAnimationDuration = 0.5f;
+
     [Header("이동")]
     [Tooltip("이동 속도 (미터/초)")]
     [SerializeField] private float _moveSpeed = 3.5f;
@@ -80,6 +83,7 @@ public class MobData : ScriptableObject
     public float AttackDamage => _attackDamage;
     public float Defense => _defense;
     public float AttackCooldown => _attackCooldown;
+    public float AttackAnimationDuration => _attackAnimationDuration;
     public float MoveSpeed => _moveSpeed;
     public float XPReward => _xpReward;
     public float AlertDuration => _alertDuration;

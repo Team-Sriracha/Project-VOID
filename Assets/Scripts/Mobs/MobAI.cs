@@ -1,4 +1,4 @@
-using Fusion;
+﻿using Fusion;
 using UnityEngine;
 using UnityEngine.AI;
 
@@ -36,7 +36,7 @@ public class MobAI : NetworkBehaviour
     #region Networked Properties
 
     [Networked]
-    public EMonsterState CurrentState { get; private set; }
+    public MonsterState CurrentState { get; private set; }
 
     [Networked]
     public PlayerRef TargetPlayer { get; private set; }
@@ -49,6 +49,9 @@ public class MobAI : NetworkBehaviour
 
     [Networked]
     private TickTimer AttackCooldown { get; set; }
+
+    [Networked]
+    private TickTimer AttackDamageTimer { get; set; }
 
     [Networked]
     private TickTimer DetectionTimer { get; set; }
@@ -95,7 +98,7 @@ public class MobAI : NetworkBehaviour
         {
             // Why: 스폰 위치 저장
             SpawnPosition = transform.position;
-            CurrentState = EMonsterState.Idle;
+            CurrentState = MonsterState.Idle;
             TargetPlayer = PlayerRef.None;
         }
     }
@@ -108,7 +111,7 @@ public class MobAI : NetworkBehaviour
         if (!HasStateAuthority) return;
 
         // Why: Dead 상태에서는 AI 로직 중단
-        if (CurrentState == EMonsterState.Dead) return;
+        if (CurrentState == MonsterState.Dead) return;
 
         // Why: 주기적 플레이어 감지
         if (DetectionTimer.Expired(Runner))
@@ -143,22 +146,22 @@ public class MobAI : NetworkBehaviour
     {
         switch (CurrentState)
         {
-            case EMonsterState.Idle:
+            case MonsterState.Idle:
                 ProcessIdleState();
                 break;
-            case EMonsterState.Alert:
+            case MonsterState.Alert:
                 ProcessAlertState();
                 break;
-            case EMonsterState.Chase:
+            case MonsterState.Chase:
                 ProcessChaseState();
                 break;
-            case EMonsterState.Attack:
+            case MonsterState.Attack:
                 ProcessAttackState();
                 break;
-            case EMonsterState.Return:
+            case MonsterState.Return:
                 ProcessReturnState();
                 break;
-            case EMonsterState.Dead:
+            case MonsterState.Dead:
                 // Why: Dead 상태는 MobCombat에서 처리
                 break;
         }
@@ -175,7 +178,7 @@ public class MobAI : NetworkBehaviour
         // Why: 플레이어가 감지되면 Chase로 전환 (Alert 건너뜀)
         if (TargetPlayer != PlayerRef.None)
         {
-            SetState(EMonsterState.Chase);
+            SetState(MonsterState.Chase);
         }
     }
 
@@ -197,11 +200,11 @@ public class MobAI : NetworkBehaviour
         {
             if (TargetPlayer != PlayerRef.None)
             {
-                SetState(EMonsterState.Chase);
+                SetState(MonsterState.Chase);
             }
             else
             {
-                SetState(EMonsterState.Idle);
+                SetState(MonsterState.Idle);
             }
         }
     }
@@ -213,7 +216,7 @@ public class MobAI : NetworkBehaviour
     {
         if (TargetPlayer == PlayerRef.None)
         {
-            SetState(EMonsterState.Return);
+            SetState(MonsterState.Return);
             return;
         }
 
@@ -222,7 +225,7 @@ public class MobAI : NetworkBehaviour
 
         if (_targetTransform == null)
         {
-            SetState(EMonsterState.Return);
+            SetState(MonsterState.Return);
             return;
         }
 
@@ -234,14 +237,14 @@ public class MobAI : NetworkBehaviour
             LogDebug($"추격 범위 이탈. 복귀 시작.");
             TargetPlayer = PlayerRef.None;
             _targetTransform = null;
-            SetState(EMonsterState.Return);
+            SetState(MonsterState.Return);
             return;
         }
 
         // Why: 공격 범위 진입 시 Attack으로 전환
         if (_data != null && distanceToTarget <= _data.AttackRange)
         {
-            SetState(EMonsterState.Attack);
+            SetState(MonsterState.Attack);
             return;
         }
 
@@ -265,7 +268,7 @@ public class MobAI : NetworkBehaviour
 
         if (TargetPlayer == PlayerRef.None)
         {
-            SetState(EMonsterState.Return);
+            SetState(MonsterState.Return);
             return;
         }
 
@@ -273,7 +276,7 @@ public class MobAI : NetworkBehaviour
 
         if (_targetTransform == null)
         {
-            SetState(EMonsterState.Return);
+            SetState(MonsterState.Return);
             return;
         }
 
@@ -282,7 +285,7 @@ public class MobAI : NetworkBehaviour
         // Why: 공격 범위 이탈 시 Chase로 전환
         if (_data != null && distanceToTarget > _data.AttackRange * 1.1f)
         {
-            SetState(EMonsterState.Chase);
+            SetState(MonsterState.Chase);
             return;
         }
 
@@ -293,6 +296,12 @@ public class MobAI : NetworkBehaviour
         if (AttackCooldown.ExpiredOrNotRunning(Runner))
         {
             TryAttack();
+        }
+
+        // Why: 공격 애니메이션 종료 후 데미지 적용
+        if (AttackDamageTimer.IsRunning && AttackDamageTimer.Expired(Runner))
+        {
+            ApplyAttackDamage();
         }
     }
 
@@ -307,14 +316,14 @@ public class MobAI : NetworkBehaviour
         if (distanceToSpawn <= POSITION_THRESHOLD)
         {
             StopNavMeshAgent();
-            SetState(EMonsterState.Idle);
+            SetState(MonsterState.Idle);
             return;
         }
 
         // Why: 복귀 중 플레이어 감지 시 Chase로 전환
         if (TargetPlayer != PlayerRef.None)
         {
-            SetState(EMonsterState.Chase);
+            SetState(MonsterState.Chase);
             return;
         }
 
@@ -330,7 +339,7 @@ public class MobAI : NetworkBehaviour
     /// 상태를 변경합니다.
     /// </summary>
     /// <param name="newState">새로운 상태</param>
-    public void SetState(EMonsterState newState)
+    public void SetState(MonsterState newState)
     {
         if (!HasStateAuthority) return;
         if (CurrentState == newState) return;
@@ -346,25 +355,29 @@ public class MobAI : NetworkBehaviour
     /// 상태 진입 시 초기화를 수행합니다.
     /// </summary>
     /// <param name="state">진입한 상태</param>
-    private void OnStateEnter(EMonsterState state)
+    private void OnStateEnter(MonsterState state)
     {
+        AlertTimer = TickTimer.None;
+        AttackCooldown = TickTimer.None;
+        DetectionTimer = TickTimer.None;
+
         switch (state)
         {
-            case EMonsterState.Idle:
+            case MonsterState.Idle:
                 TargetPlayer = PlayerRef.None;
                 _targetTransform = null;
                 break;
-            case EMonsterState.Alert:
+            case MonsterState.Alert:
                 if (_animationController != null)
                 {
                     _animationController.PlayAlert();
                 }
                 break;
-            case EMonsterState.Return:
+            case MonsterState.Return:
                 TargetPlayer = PlayerRef.None;
                 _targetTransform = null;
                 break;
-            case EMonsterState.Dead:
+            case MonsterState.Dead:
                 StopNavMeshAgent();
                 break;
         }
@@ -380,7 +393,7 @@ public class MobAI : NetworkBehaviour
         if (!HasStateAuthority) return;
 
         // Why: 이미 죽은 상태면 무시
-        if (CurrentState == EMonsterState.Dead) return;
+        if (CurrentState == MonsterState.Dead) return;
 
         // Why: 타겟 설정
         TargetPlayer = attacker;
@@ -394,10 +407,10 @@ public class MobAI : NetworkBehaviour
             // Why: 추격 범위 내에서 피격 → 바로 추격
             if (distanceToAttacker <= _data.ChaseRange)
             {
-                if (CurrentState == EMonsterState.Idle || CurrentState == EMonsterState.Return)
+                if (CurrentState == MonsterState.Idle || CurrentState == MonsterState.Return)
                 {
                     // Why: Alert 상태를 거치고 Chase로 전환
-                    SetState(EMonsterState.Alert);
+                    SetState(MonsterState.Alert);
                     if (_data != null)
                     {
                         AlertTimer = TickTimer.CreateFromSeconds(Runner, _data.AlertDuration);
@@ -506,13 +519,29 @@ public class MobAI : NetworkBehaviour
             return;
         }
 
-        // Why: OverlapSphere로 감지 범위 내 플레이어 감지
-        int count = Physics.OverlapSphereNonAlloc(
-            transform.position,
-            _data.DetectionRange, // 감지 범위 사용
-            _detectedColliders,
-            _playerLayer
-        );
+        // Why: Multi-Peer 환경에서 올바른 Physics 씬에서 OverlapSphere 수행
+        int count;
+        if (Runner.SceneManager != null && Runner.SceneManager.TryGetPhysicsScene3D(out var physicsScene) && physicsScene.IsValid())
+        {
+            // Multi-Peer: 해당 Runner의 PhysicsScene에서 OverlapSphere
+            count = physicsScene.OverlapSphere(
+                transform.position,
+                _data.DetectionRange,
+                _detectedColliders,
+                _playerLayer,
+                QueryTriggerInteraction.Ignore
+            );
+        }
+        else
+        {
+            // Fallback: 기본 Physics.OverlapSphereNonAlloc (Single-Peer)
+            count = Physics.OverlapSphereNonAlloc(
+                transform.position,
+                _data.DetectionRange,
+                _detectedColliders,
+                _playerLayer
+            );
+        }
 
         LogDebug($"DetectNearbyPlayers: OverlapSphere 결과 = {count}개, Range = {_data.DetectionRange}, LayerMask = {_playerLayer.value}");
 
@@ -574,48 +603,22 @@ public class MobAI : NetworkBehaviour
             _targetTransform = closestTransform;
 
             // Why: Idle 또는 Return 상태에서 플레이어 감지 시 즉시 Chase로 전환
-            if (CurrentState == EMonsterState.Idle || CurrentState == EMonsterState.Return)
+            if (CurrentState == MonsterState.Idle || CurrentState == MonsterState.Return)
             {
                 LogDebug($"DetectionRange 내 플레이어 감지! 즉시 Chase 시작.");
-                SetState(EMonsterState.Chase);
+                SetState(MonsterState.Chase);
             }
         }
         else
         {
             // Why: 감지 범위 내에 플레이어가 없고, 현재 타겟도 없으면 타겟 해제
             // 추격 중이면 타겟 유지 (ChaseRange로 체크)
-            if (CurrentState == EMonsterState.Idle || CurrentState == EMonsterState.Return)
+            if (CurrentState == MonsterState.Idle || CurrentState == MonsterState.Return)
             {
                 TargetPlayer = PlayerRef.None;
                 _targetTransform = null;
             }
         }
-    }
-
-    /// <summary>
-    /// 현재 타겟이 유효한지 확인합니다.
-    /// </summary>
-    /// <returns>타겟이 유효하면 true</returns>
-    private bool IsTargetValid()
-    {
-        if (TargetPlayer == PlayerRef.None) return false;
-
-        UpdateTargetTransform();
-
-        if (_targetTransform == null) return false;
-
-        // Why: 타겟이 살아있는지 확인
-        PlayerCombat playerCombat = _targetTransform.GetComponent<PlayerCombat>();
-        if (playerCombat == null || !playerCombat.IsAlive) return false;
-
-        // Why: 추격 범위(ChaseRange) 밖으로 나가면 타겟 무효 → 귀환
-        if (_data != null)
-        {
-            float distanceToTarget = Vector3.Distance(transform.position, _targetTransform.position);
-            if (distanceToTarget > _data.ChaseRange) return false;
-        }
-
-        return true;
     }
 
     /// <summary>
@@ -629,13 +632,16 @@ public class MobAI : NetworkBehaviour
             return;
         }
 
-        // Why: 이미 유효한 Transform이 있으면 사용
-        if (_targetTransform != null) return;
-
-        // Why: PlayerRef로 NetworkObject를 찾아 Transform 가져오기
         if (Runner != null && Runner.TryGetPlayerObject(TargetPlayer, out var playerObject))
         {
             _targetTransform = playerObject.transform;
+
+            PlayerCombat combat = playerObject.GetComponent<PlayerCombat>();
+            if (combat == null || !combat.IsAlive)
+            {
+                TargetPlayer = PlayerRef.None;
+                _targetTransform = null;
+            }
         }
         else
         {
@@ -660,17 +666,41 @@ public class MobAI : NetworkBehaviour
             _animationController.PlayAttack();
         }
 
+        // Why: 애니메이션 종료 후 데미지 적용을 위한 타이머 설정
+        AttackDamageTimer = TickTimer.CreateFromSeconds(Runner, _data.AttackAnimationDuration);
+
+        // Why: 공격 쿨다운 설정
+        AttackCooldown = TickTimer.CreateFromSeconds(Runner, _data.AttackCooldown);
+        
+        LogDebug($"공격 시작! {_data.AttackAnimationDuration}초 후 데미지 적용 예정.");
+    }
+
+    /// <summary>
+    /// 공격 애니메이션 종료 후 데미지를 적용합니다.
+    /// </summary>
+    private void ApplyAttackDamage()
+    {
+        // Why: 데미지 타이머 리셋
+        AttackDamageTimer = TickTimer.None;
+
+        if (_data == null || _targetTransform == null) return;
+
+        // Why: 공격 시점에 타겟 거리 재확인 (공격 범위 내에 있어야 함)
+        float distanceToTarget = Vector3.Distance(transform.position, _targetTransform.position);
+        if (distanceToTarget > _data.AttackRange * 1.2f)
+        {
+            LogDebug("데미지 적용 시점에 타겟이 공격 범위 밖으로 이탈함.");
+            return;
+        }
+
         // Why: 타겟에게 데미지 적용
         IDamageable damageable = _targetTransform.GetComponent<IDamageable>();
         if (damageable != null && damageable.IsAlive)
         {
             // Why: 몹은 PlayerRef.None으로 공격 (몹이 공격자)
             damageable.TakeDamage(_data.AttackDamage, PlayerRef.None);
-            LogDebug($"공격! {_data.AttackDamage} 데미지.");
+            LogDebug($"데미지 적용! {_data.AttackDamage} 데미지.");
         }
-
-        // Why: 공격 쿨다운 설정
-        AttackCooldown = TickTimer.CreateFromSeconds(Runner, _data.AttackCooldown);
     }
 
     #endregion

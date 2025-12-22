@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using System.Collections.Generic;
 using Fusion;
 
@@ -19,12 +19,12 @@ namespace ProjectVoid.Map
         /// <summary>
         /// 실제 생성된 문 정보 (절차적 생성 결과)
         /// </summary>
-        private Dictionary<EDirection, bool> _actualDoors = new Dictionary<EDirection, bool>();
+        private Dictionary<Direction, bool> _actualDoors = new Dictionary<Direction, bool>();
 
         /// <summary>
         /// 각 방향별 벽/문 구간 정보
         /// </summary>
-        private Dictionary<EDirection, List<WallSegmentData>> _wallSegments = new Dictionary<EDirection, List<WallSegmentData>>();
+        private Dictionary<Direction, List<WallSegmentData>> _wallSegments = new Dictionary<Direction, List<WallSegmentData>>();
 
         #endregion
 
@@ -62,7 +62,7 @@ namespace ProjectVoid.Map
         /// </summary>
         /// <param name="startWallIndex">시작 벽 인덱스 (기본값: 0)</param>
         /// <param name="endWallIndex">종료 벽 인덱스 (기본값: -1, 전체)</param>
-        public void SetWall(EDirection direction, GameObject wallPrefab, int chunkSize, float wallSpacing, int startWallIndex = 0, int endWallIndex = -1)
+        public void SetWall(Direction direction, GameObject wallPrefab, int chunkSize, float wallSpacing, int startWallIndex = 0, int endWallIndex = -1)
         {
             if (wallPrefab == null)
             {
@@ -118,7 +118,7 @@ namespace ProjectVoid.Map
         /// </summary>
         /// <param name="startWallIndex">시작 벽 인덱스 (기본값: 0)</param>
         /// <param name="endWallIndex">종료 벽 인덱스 (기본값: -1, 전체)</param>
-        public void SetDoor(EDirection direction, GameObject doorPrefab, int chunkSize, float wallSpacing, int startWallIndex = 0, int endWallIndex = -1)
+        public void SetDoor(Direction direction, GameObject doorPrefab, int chunkSize, float wallSpacing, int startWallIndex = 0, int endWallIndex = -1)
         {
             // 청크 크기에 따라 배치할 벽 길이 계산 (멀티 칸 청크 고려)
             int effectiveLength = GetEffectiveLengthForDirection(direction, chunkSize);
@@ -181,7 +181,7 @@ namespace ProjectVoid.Map
         /// effectiveLength: 해당 방향의 실제 벽 길이 (멀티 칸 청크 고려)
         /// chunkSize: 단일 칸의 크기 (설정값, 기본 27)
         /// </summary>
-        private Vector3 CalculateWallWorldPosition(EDirection direction, int index, int effectiveLength, int chunkSize, float wallSpacing)
+        private Vector3 CalculateWallWorldPosition(Direction direction, int index, int effectiveLength, int chunkSize, float wallSpacing)
         {
             int totalCount = Mathf.FloorToInt(effectiveLength / wallSpacing);
 
@@ -208,10 +208,10 @@ namespace ProjectVoid.Map
             // 이웃 청크가 있으면 South/West는 생성 안 함 → 겹침 없음
             Vector3 localOffset = direction switch
             {
-                EDirection.North => new Vector3(floorCenterX + positionAlongEdge, 0, height * chunkSize),
-                EDirection.South => new Vector3(floorCenterX + positionAlongEdge, 0, 0),
-                EDirection.East => new Vector3(width * chunkSize, 0, floorCenterZ + positionAlongEdge),
-                EDirection.West => new Vector3(0, 0, floorCenterZ + positionAlongEdge),
+                Direction.North => new Vector3(floorCenterX + positionAlongEdge, 0, height * chunkSize),
+                Direction.South => new Vector3(floorCenterX + positionAlongEdge, 0, 0),
+                Direction.East => new Vector3(width * chunkSize, 0, floorCenterZ + positionAlongEdge),
+                Direction.West => new Vector3(0, 0, floorCenterZ + positionAlongEdge),
                 _ => Vector3.zero
             };
 
@@ -221,14 +221,14 @@ namespace ProjectVoid.Map
         /// <summary>
         /// 벽/문의 회전을 계산합니다.
         /// </summary>
-        private Quaternion CalculateWallRotation(EDirection direction)
+        private Quaternion CalculateWallRotation(Direction direction)
         {
             return direction switch
             {
-                EDirection.North => Quaternion.Euler(0, 0, 0),     // Z+
-                EDirection.South => Quaternion.Euler(0, 180, 0),   // Z-
-                EDirection.East => Quaternion.Euler(0, 90, 0),     // X+
-                EDirection.West => Quaternion.Euler(0, -90, 0),    // X-
+                Direction.North => Quaternion.Euler(0, 0, 0),     // Z+
+                Direction.South => Quaternion.Euler(0, 180, 0),   // Z-
+                Direction.East => Quaternion.Euler(0, 90, 0),     // X+
+                Direction.West => Quaternion.Euler(0, -90, 0),    // X-
                 _ => Quaternion.identity
             };
         }
@@ -240,7 +240,7 @@ namespace ProjectVoid.Map
         /// <summary>
         /// 특정 방향에 문이 있는지 확인합니다 (실제 생성 기준).
         /// </summary>
-        public bool HasDoor(EDirection direction)
+        public bool HasDoor(Direction direction)
         {
             return _actualDoors.TryGetValue(direction, out bool hasDoor) && hasDoor;
         }
@@ -248,9 +248,9 @@ namespace ProjectVoid.Map
         /// <summary>
         /// 문이 있는 모든 방향을 반환합니다.
         /// </summary>
-        public List<EDirection> GetDoorDirections()
+        public List<Direction> GetDoorDirections()
         {
-            var doorDirections = new List<EDirection>();
+            var doorDirections = new List<Direction>();
             foreach (var kvp in _actualDoors)
             {
                 if (kvp.Value)
@@ -281,7 +281,7 @@ namespace ProjectVoid.Map
         /// <summary>
         /// 특정 방향의 모든 벽/문 구간 정보를 반환합니다.
         /// </summary>
-        public WallSegmentData[] GetWallSegments(EDirection direction)
+        public WallSegmentData[] GetWallSegments(Direction direction)
         {
             if (_wallSegments.TryGetValue(direction, out List<WallSegmentData> segments))
             {
@@ -306,7 +306,7 @@ namespace ProjectVoid.Map
         /// <summary>
         /// 방향에 따른 실제 벽 길이를 계산합니다 (멀티 칸 청크 고려).
         /// </summary>
-        private int GetEffectiveLengthForDirection(EDirection direction, int chunkSize)
+        private int GetEffectiveLengthForDirection(Direction direction, int chunkSize)
         {
             if (_chunkData == null)
                 return chunkSize;
@@ -315,10 +315,10 @@ namespace ProjectVoid.Map
             // East/West: 청크의 세로 길이 (ChunkHeight)
             int effectiveLength = direction switch
             {
-                EDirection.North => _chunkData.ChunkWidth * chunkSize,
-                EDirection.South => _chunkData.ChunkWidth * chunkSize,
-                EDirection.East => _chunkData.ChunkHeight * chunkSize,
-                EDirection.West => _chunkData.ChunkHeight * chunkSize,
+                Direction.North => _chunkData.ChunkWidth * chunkSize,
+                Direction.South => _chunkData.ChunkWidth * chunkSize,
+                Direction.East => _chunkData.ChunkHeight * chunkSize,
+                Direction.West => _chunkData.ChunkHeight * chunkSize,
                 _ => chunkSize
             };
 

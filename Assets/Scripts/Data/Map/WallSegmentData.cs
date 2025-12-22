@@ -1,4 +1,4 @@
-using Fusion;
+﻿using Fusion;
 
 namespace ProjectVoid.Map
 {
@@ -32,7 +32,7 @@ namespace ProjectVoid.Map
         /// </summary>
         public byte SegmentType;
 
-        public WallSegmentData(int chunkIndex, EDirection direction, int startIndex, int endIndex, bool isDoor)
+        public WallSegmentData(int chunkIndex, Direction direction, int startIndex, int endIndex, bool isDoor)
         {
             ChunkIndex = (ushort)chunkIndex;
             Direction = (byte)direction;
@@ -44,7 +44,7 @@ namespace ProjectVoid.Map
         /// <summary>
         /// ChunkIndex 없이 생성 (나중에 MapGenerator에서 설정)
         /// </summary>
-        public WallSegmentData(EDirection direction, int startIndex, int endIndex, bool isDoor) : this(0, direction, startIndex, endIndex, isDoor)
+        public WallSegmentData(Direction direction, int startIndex, int endIndex, bool isDoor) : this(0, direction, startIndex, endIndex, isDoor)
         {
         }
 
@@ -61,6 +61,6 @@ namespace ProjectVoid.Map
         /// <summary>
         /// 방향을 enum으로 반환
         /// </summary>
-        public EDirection GetDirection() => (EDirection)Direction;
+        public Direction GetDirection() => (Direction)Direction;
     }
 }

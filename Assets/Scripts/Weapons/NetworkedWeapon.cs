@@ -1,4 +1,4 @@
-using Fusion;
+﻿using Fusion;
 using UnityEngine;
 
 /// <summary>
@@ -25,6 +25,7 @@ public class NetworkedWeapon : NetworkBehaviour
     private NetworkedItem _currentEquippedItem;
     private AimVisualizer _aimVisualizer;
     private PlayerAnimationController _animationController;
+    private ProjectilePool _projectilePool;
 
     #endregion
 
@@ -59,6 +60,7 @@ public class NetworkedWeapon : NetworkBehaviour
     {
         _aimVisualizer = GetComponent<AimVisualizer>();
         _animationController = GetComponent<PlayerAnimationController>();
+        ServiceLocator.TryGet(Runner, out _projectilePool);
 
         if (_weaponData == null && _playerStats != null)
         {
@@ -87,15 +89,6 @@ public class NetworkedWeapon : NetworkBehaviour
         if (!HasStateAuthority) return;
 
         if (IsReloading && ReloadTimer.ExpiredOrNotRunning(Runner))
-        {
-            CompleteReload();
-        }
-    }
-
-    public override void Render()
-    {
-        // Why: 프레임 단위 정확도로 재장전 완료 타이밍 개선 (FixedUpdateNetwork는 틱 단위)
-        if (HasStateAuthority && IsReloading && ReloadTimer.ExpiredOrNotRunning(Runner))
         {
             CompleteReload();
         }
@@ -201,7 +194,9 @@ public class NetworkedWeapon : NetworkBehaviour
         {
             if (CurrentAmmo <= 0) return;
 
-            FireProjectile(gunData, direction);
+            bool projectileSpawned = FireProjectile(gunData, direction);
+            if (!projectileSpawned) return;
+
             CurrentAmmo--;
             FireCounter++; // Why: Counter 증가로 모든 클라이언트에서 애니메이션 재생
 
@@ -266,6 +261,7 @@ public class NetworkedWeapon : NetworkBehaviour
 
         CurrentAmmo += ammoToReload;
         TotalAmmo -= ammoToReload;
+        TotalAmmo = Mathf.Max(TotalAmmo, 0);
         IsReloading = false;
 
         // Why: Trigger 패턴이므로 별도의 종료 호출 불필요 (Has Exit Time으로 자동 복귀)
@@ -275,38 +271,45 @@ public class NetworkedWeapon : NetworkBehaviour
 
     #region Weapon Actions
 
-    private void FireProjectile(GunData gunData, Vector3 direction)
+    private bool FireProjectile(GunData gunData, Vector3 direction)
     {
+        if (Runner == null || !Runner.IsRunning) return false;
+
         // Why: 발사체는 AimPoint에서 생성 (실제 공격 시작 위치)
         Vector3 spawnPos = _aimVisualizer != null && _aimVisualizer.AimPoint != null
             ? _aimVisualizer.AimPoint.position
             : transform.position + Vector3.up * 1.5f;
         Quaternion spawnRot = Quaternion.LookRotation(direction);
 
-        // Why: onBeforeSpawned 콜백에서 Networked 프로퍼티 초기화
-        Runner.Spawn(
-            gunData.ProjectilePrefab,
-            spawnPos,
-            spawnRot,
-            inputAuthority: PlayerRef.None, // Why: 발사체는 InputAuthority 불필요
-            (runner, obj) =>
-            {
-                var projectile = obj.GetComponent<Projectile>();
-                if (projectile != null)
+        NetworkObject spawnedObject = null;
+
+        if (_projectilePool != null)
+        {
+            spawnedObject = _projectilePool.Get(spawnPos, spawnRot);
+            InitializeProjectile(spawnedObject, gunData, direction);
+        }
+        else
+        {
+            spawnedObject = Runner.Spawn(
+                gunData.ProjectilePrefab,
+                spawnPos,
+                spawnRot,
+                inputAuthority: PlayerRef.None, // Why: 발사체는 InputAuthority 불필요
+                (runner, obj) =>
                 {
-                    projectile.Direction = direction;
-                    projectile.Speed = gunData.ProjectileSpeed;
-                    projectile.Damage = gunData.Damage;
-                    projectile.Owner = Object.InputAuthority;
-                    projectile.MaxRange = gunData.Range;
-                    projectile.HitLayerMask = gunData.HitLayers.value;
-                    projectile.IsInitialized = true;
+                    InitializeProjectile(obj, gunData, direction);
                 }
-            }
-        );
+            );
+        }
+
+        if (spawnedObject == null)
+        {
+            return false;
+        }
 
         // Why: 이펙트는 FirePoint에서 생성 (무기 총구 위치)
         RPC_SpawnMuzzleFlash();
+        return true;
     }
 
     private void ExecuteMeleeAttack(MeleeWeaponData meleeData, Vector3 direction)
@@ -315,7 +318,24 @@ public class NetworkedWeapon : NetworkBehaviour
         Vector3 attackPos = _aimVisualizer != null && _aimVisualizer.AimPoint != null
             ? _aimVisualizer.AimPoint.position
             : transform.position + Vector3.up * 1.5f;
-        Collider[] hits = Physics.OverlapSphere(attackPos, meleeData.Range, meleeData.HitLayers);
+        
+        // Why: Multi-Peer 환경에서 올바른 Physics 씬에서 OverlapSphere 수행
+        Collider[] hits;
+        if (Runner.SceneManager != null && Runner.SceneManager.TryGetPhysicsScene3D(out var physicsScene) && physicsScene.IsValid())
+        {
+            // Multi-Peer: 해당 Runner의 PhysicsScene에서 OverlapSphere
+            hits = new Collider[32]; // 최대 32개 충돌체
+            int hitCount = physicsScene.OverlapSphere(attackPos, meleeData.Range, hits, meleeData.HitLayers, QueryTriggerInteraction.Ignore);
+            System.Array.Resize(ref hits, hitCount);
+            Debug.Log($"[NetworkedWeapon] PhysicsScene OverlapSphere - Scene: {physicsScene}, HitCount: {hitCount}, Position: {attackPos}, Range: {meleeData.Range}");
+        }
+        else
+        {
+            // Fallback: 기본 Physics.OverlapSphere (Single-Peer)
+            hits = Physics.OverlapSphere(attackPos, meleeData.Range, meleeData.HitLayers);
+            Debug.LogWarning($"[NetworkedWeapon] Fallback Physics.OverlapSphere used! SceneManager: {Runner.SceneManager != null}");
+        }
+
         float halfAngle = meleeData.AttackAngle / 2f;
 
         Debug.Log($"[NetworkedWeapon] ExecuteMeleeAttack - 감지된 충돌체: {hits.Length}개, 위치: {attackPos}, 범위: {meleeData.Range}");
@@ -331,7 +351,8 @@ public class NetworkedWeapon : NetworkBehaviour
                 continue;
             }
 
-            Vector3 toTarget = (hit.transform.position - attackPos).normalized;
+            Vector3 hitPoint = hit.ClosestPoint(attackPos);
+            Vector3 toTarget = (hitPoint - attackPos).normalized;
             float angle = Vector3.Angle(direction, toTarget);
 
             Debug.Log($"[NetworkedWeapon] {hit.gameObject.name} - 각도: {angle}, 제한각도: {halfAngle}");
@@ -348,14 +369,29 @@ public class NetworkedWeapon : NetworkBehaviour
                     damageable.TakeDamage(meleeData.Damage, Object.InputAuthority);
 
                     // Why: 실제 피격 위치(콜라이더 표면)에 이펙트 생성
-                    Vector3 hitPoint = hit.ClosestPoint(attackPos);
-                    RPC_SpawnMeleeHitEffect(hitPoint, -toTarget);
+                    Vector3 hitPosition = hit.ClosestPoint(attackPos);
+                    RPC_SpawnMeleeHitEffect(hitPosition, -toTarget);
                 }
             }
         }
 
         // Why: 이펙트는 FirePoint에서 생성 (무기 위치)
         RPC_SpawnMeleeSwing(direction);
+    }
+
+    private void InitializeProjectile(NetworkObject obj, GunData gunData, Vector3 direction)
+    {
+        var projectile = obj != null ? obj.GetComponent<Projectile>() : null;
+        if (projectile != null)
+        {
+            projectile.Direction = direction;
+            projectile.Speed = gunData.ProjectileSpeed;
+            projectile.Damage = gunData.Damage;
+            projectile.Owner = Object.InputAuthority;
+            projectile.MaxRange = gunData.Range;
+            projectile.HitLayerMask = gunData.HitLayers.value;
+            projectile.IsInitialized = true;
+        }
     }
 
     #endregion

@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 
 /// <summary>
 /// 캐주얼 탑다운 슈터 최적화 카메라 타겟.

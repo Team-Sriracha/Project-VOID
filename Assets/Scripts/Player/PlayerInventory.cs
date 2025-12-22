@@ -1,4 +1,4 @@
-using Fusion;
+﻿using Fusion;
 using UnityEngine;
 
 /// <summary>
@@ -132,8 +132,15 @@ public class PlayerInventory : NetworkBehaviour
         ItemSlots.Set(targetSlot, networkedItem.Object.Id);
 
         // Why: NetworkedItem의 Owner를 현재 플레이어로 설정
-        networkedItem.Owner = Object.InputAuthority;
-        Debug.Log($"[PlayerInventory] NetworkedItem Owner 설정: {networkedItem.Owner}, InputAuthority: {Object.InputAuthority}");
+        if (networkedItem.HasStateAuthority)
+        {
+            networkedItem.Owner = Object.InputAuthority;
+            Debug.Log($"[PlayerInventory] NetworkedItem Owner 설정: {networkedItem.Owner}, InputAuthority: {Object.InputAuthority}");
+        }
+        else
+        {
+            Debug.LogWarning("[PlayerInventory] StateAuthority 없이 Owner를 설정할 수 없습니다!");
+        }
 
         // Why: 무기 슬롯에 추가된 경우 즉시 장착
         if (targetSlot == SLOT_WEAPON && itemData is WeaponData weaponData)
@@ -185,8 +192,15 @@ public class PlayerInventory : NetworkBehaviour
 
         // 새 아이템 추가
         ItemSlots.Set(slotIndex, newItem.Object.Id);
-        newItem.Owner = Object.InputAuthority;
-        Debug.Log($"[PlayerInventory] SwapItem - NetworkedItem Owner 설정: {newItem.Owner}, InputAuthority: {Object.InputAuthority}");
+        if (newItem.HasStateAuthority)
+        {
+            newItem.Owner = Object.InputAuthority;
+            Debug.Log($"[PlayerInventory] SwapItem - NetworkedItem Owner 설정: {newItem.Owner}, InputAuthority: {Object.InputAuthority}");
+        }
+        else
+        {
+            Debug.LogWarning("[PlayerInventory] StateAuthority 없이 Owner를 설정할 수 없습니다!");
+        }
 
         // Why: 무기 슬롯이면 무기 장착
         if (slotIndex == SLOT_WEAPON && newItemData is WeaponData weaponData)
@@ -299,11 +313,22 @@ public class PlayerInventory : NetworkBehaviour
     [Rpc(RpcSources.InputAuthority, RpcTargets.StateAuthority)]
     public void RPC_RequestSwapItem(int slotIndex, NetworkId itemNetworkId, RpcInfo info = default)
     {
+        if (!HasStateAuthority) return;
+
         NetworkedItem item = GetNetworkedItemById(itemNetworkId);
-        if (item != null)
+        if (item == null)
         {
-            SwapItem(slotIndex, item);
+            Debug.LogWarning($"[PlayerInventory] RPC_RequestSwapItem - NetworkId {itemNetworkId} 아이템을 찾을 수 없습니다.");
+            return;
         }
+
+        if (item.Owner != PlayerRef.None)
+        {
+            Debug.LogWarning($"[PlayerInventory] RPC_RequestSwapItem - 이미 소유된 아이템입니다: Owner={item.Owner}");
+            return;
+        }
+
+        SwapItem(slotIndex, item);
     }
 
     #endregion
@@ -313,20 +338,20 @@ public class PlayerInventory : NetworkBehaviour
     /// <summary>
     /// 아이템 타입에 맞는 슬롯 인덱스를 반환합니다.
     /// </summary>
-    private int GetSlotForItemType(EItemType itemType)
+    private int GetSlotForItemType(ItemType itemType)
     {
         return itemType switch
         {
-            EItemType.Weapon => SLOT_WEAPON,
-            EItemType.Armor => SLOT_ARMOR,
-            EItemType.Usable => GetFirstEmptyUsableSlot(),
+            ItemType.Weapon => SLOT_WEAPON,
+            ItemType.Armor => SLOT_ARMOR,
+            ItemType.Usable => GetFirstEmptyUsableSlot(),
             _ => -1
         };
     }
 
     /// <summary>
     /// 빈 사용아이템 슬롯을 찾아 반환합니다.
-    /// Why: 빈 슬롯이 없으면 마지막 칸(슬롯4)을 반환
+    /// Why: 빈 슬롯이 없으면 -1 반환하여 덮어쓰지 않음
     /// </summary>
     private int GetFirstEmptyUsableSlot()
     {
@@ -337,8 +362,8 @@ public class PlayerInventory : NetworkBehaviour
                 return i;
             }
         }
-        // 모든 슬롯이 차있으면 마지막 칸(슬롯4) 반환
-        return SLOT_COUNT - 1;
+        // 모든 슬롯이 차있으면 -1 반환
+        return -1;
     }
 
     /// <summary>

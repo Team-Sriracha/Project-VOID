@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
@@ -103,7 +103,7 @@ public class ItemPickupUI : MonoBehaviour
 
     #region Helper Methods
 
-    private ItemData GetCurrentEquippedItem(EItemType itemType)
+    private ItemData GetCurrentEquippedItem(ItemType itemType)
     {
         if (_inventory == null) return null;
         
@@ -112,8 +112,8 @@ public class ItemPickupUI : MonoBehaviour
 
         int slotIndex = itemType switch
         {
-            EItemType.Weapon => 0,
-            EItemType.Armor => 1,
+            ItemType.Weapon => 0,
+            ItemType.Armor => 1,
             _ => -1
         };
 

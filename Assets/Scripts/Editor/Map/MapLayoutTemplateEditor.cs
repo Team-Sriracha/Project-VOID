@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEditor;
 using ProjectVoid.Map;
 
@@ -39,7 +39,7 @@ namespace ProjectVoid.Editor.Map
         #region Private Fields
 
         private MapLayoutTemplate _template;
-        private EGridCell _selectedCellType = EGridCell.Normal;
+        private GridCell _selectedCellType = GridCell.Normal;
         private int _selectedGroupId = 0;
         private bool _isGroupIdMode = false;
         private bool _isSpawnPointMode = false;
@@ -198,35 +198,35 @@ namespace ProjectVoid.Editor.Map
             EditorGUILayout.BeginHorizontal();
 
             // Empty
-            if (GUILayout.Toggle(_selectedCellType == EGridCell.Empty,
+            if (GUILayout.Toggle(_selectedCellType == GridCell.Empty,
                 new GUIContent("Empty", "빈 공간"),
                 "Button", GUILayout.Height(30)))
             {
-                _selectedCellType = EGridCell.Empty;
+                _selectedCellType = GridCell.Empty;
             }
 
             // Central
-            if (GUILayout.Toggle(_selectedCellType == EGridCell.Central,
+            if (GUILayout.Toggle(_selectedCellType == GridCell.Central,
                 new GUIContent("Central", "중앙 청크"),
                 "Button", GUILayout.Height(30)))
             {
-                _selectedCellType = EGridCell.Central;
+                _selectedCellType = GridCell.Central;
             }
 
             // Normal
-            if (GUILayout.Toggle(_selectedCellType == EGridCell.Normal,
+            if (GUILayout.Toggle(_selectedCellType == GridCell.Normal,
                 new GUIContent("Normal", "일반 청크"),
                 "Button", GUILayout.Height(30)))
             {
-                _selectedCellType = EGridCell.Normal;
+                _selectedCellType = GridCell.Normal;
             }
 
             // Special
-            if (GUILayout.Toggle(_selectedCellType == EGridCell.Special,
+            if (GUILayout.Toggle(_selectedCellType == GridCell.Special,
                 new GUIContent("Special", "스페셜 청크"),
                 "Button", GUILayout.Height(30)))
             {
-                _selectedCellType = EGridCell.Special;
+                _selectedCellType = GridCell.Special;
             }
 
             EditorGUILayout.EndHorizontal();
@@ -559,7 +559,7 @@ namespace ProjectVoid.Editor.Map
 
             Rect cellRect = new Rect(xPos, yPos, cellSize, cellSize);
 
-            EGridCell cellType = _template.GetCell(x, y);
+            GridCell cellType = _template.GetCell(x, y);
             int groupId = _template.GetChunkGroupId(x, y);
             Color cellColor = GetCellColor(cellType);
 
@@ -609,10 +609,10 @@ namespace ProjectVoid.Editor.Map
                 // 셀 타입 모드: 셀 타입 표시
                 cellText = cellType switch
                 {
-                    EGridCell.Empty => "",
-                    EGridCell.Central => "C",
-                    EGridCell.Normal => "N",
-                    EGridCell.Special => "S",
+                    GridCell.Empty => "",
+                    GridCell.Central => "C",
+                    GridCell.Normal => "N",
+                    GridCell.Special => "S",
                     _ => "?"
                 };
             }
@@ -748,7 +748,7 @@ namespace ProjectVoid.Editor.Map
                 {
                     // 셀 타입 모드: Empty로 설정
                     Undo.RecordObject(_template, "Erase Cell");
-                    _template.SetCell(gridX, gridY, EGridCell.Empty);
+                    _template.SetCell(gridX, gridY, GridCell.Empty);
                 }
 
                 EditorUtility.SetDirty(_template);
@@ -775,8 +775,8 @@ namespace ProjectVoid.Editor.Map
             if (gridX >= 0 && gridX < width && gridY >= 0 && gridY < height)
             {
                 // Empty 셀에는 스폰 포인트를 배치할 수 없음
-                EGridCell cellType = _template.GetCell(gridX, gridY);
-                if (cellType == EGridCell.Empty)
+                GridCell cellType = _template.GetCell(gridX, gridY);
+                if (cellType == GridCell.Empty)
                 {
                     Debug.LogWarning("스폰 포인트는 Empty 셀에 배치할 수 없습니다.");
                     return;
@@ -894,14 +894,14 @@ namespace ProjectVoid.Editor.Map
         /// <summary>
         /// 셀 타입에 따른 색상 반환
         /// </summary>
-        private Color GetCellColor(EGridCell cellType)
+        private Color GetCellColor(GridCell cellType)
         {
             return cellType switch
             {
-                EGridCell.Empty => new Color(0.3f, 0.3f, 0.3f),      // 어두운 회색
-                EGridCell.Central => new Color(1f, 0.8f, 0f),        // 노란색
-                EGridCell.Normal => new Color(0.3f, 0.8f, 1f),       // 하늘색
-                EGridCell.Special => new Color(1f, 0.3f, 0.3f),     // 빨간색
+                GridCell.Empty => new Color(0.3f, 0.3f, 0.3f),      // 어두운 회색
+                GridCell.Central => new Color(1f, 0.8f, 0f),        // 노란색
+                GridCell.Normal => new Color(0.3f, 0.8f, 1f),       // 하늘색
+                GridCell.Special => new Color(1f, 0.3f, 0.3f),     // 빨간색
                 _ => Color.magenta
             };
         }
@@ -943,7 +943,7 @@ namespace ProjectVoid.Editor.Map
             {
                 for (int x = 0; x < _template.Width; x++)
                 {
-                    _template.SetCell(x, y, EGridCell.Empty);
+                    _template.SetCell(x, y, GridCell.Empty);
                 }
             }
             EditorUtility.SetDirty(_template);
@@ -959,7 +959,7 @@ namespace ProjectVoid.Editor.Map
         {
             Undo.RecordObject(_template, "Set Center Cell");
             Vector2Int center = _template.GetCenterPosition();
-            _template.SetCell(center.x, center.y, EGridCell.Central);
+            _template.SetCell(center.x, center.y, GridCell.Central);
             EditorUtility.SetDirty(_template);
             serializedObject.Update();
             AssetDatabase.SaveAssets();

@@ -1,4 +1,4 @@
-using Fusion;
+﻿using Fusion;
 using UnityEngine;
 using System.Collections.Generic;
 using System.Linq;
@@ -83,6 +83,11 @@ namespace ProjectVoid.Map
         private Dictionary<Vector2Int, int> _chunkToIndexMap; // 청크 위치 → NetworkArray 인덱스 매핑
         private HashSet<Vector2Int> _warningChunks; // 경고 중인 청크 (깜빡임 효과용)
         private int _lastWarningPhase; // 마지막으로 경고를 표시한 Phase (중복 방지)
+        private Dictionary<int, Dictionary<ChunkInstance, int>> _cachedDistancesByPhase; // Phase별 BFS 캐시
+        
+        // Why: Client 초기화 전에 RPC가 도착할 경우를 대비한 캐시
+        private Vector2Int[] _pendingChunkPositions;
+        private int _pendingChunkCount;
 
         #endregion
 
@@ -98,6 +103,7 @@ namespace ProjectVoid.Map
             _mapSettings = mapSettings;
             _redLights = new Dictionary<Vector2Int, List<GameObject>>();
             _chunkToIndexMap = new Dictionary<Vector2Int, int>();
+            _cachedDistancesByPhase = new Dictionary<int, Dictionary<ChunkInstance, int>>();
 
             if (HasStateAuthority)
             {
@@ -120,6 +126,7 @@ namespace ProjectVoid.Map
             {
                 _chunkToIndexMap = new Dictionary<Vector2Int, int>();
             }
+            ClearDistanceCache();
 
             _chunkToIndexMap.Clear();
 
@@ -190,19 +197,58 @@ namespace ProjectVoid.Map
 
             Debug.Log($"[OxygenDepletionManager] 서버로부터 청크 매핑 수신: {count}개");
 
+            if (_mapGenerator == null || _mapGenerator.PlacedChunks == null)
+            {
+                Debug.LogWarning("[OxygenDepletionManager] MapGenerator가 준비되지 않아 청크 매핑을 보류합니다.");
+                _pendingChunkPositions = chunkPositions;
+                _pendingChunkCount = count;
+                return;
+            }
+
+            ApplyChunkMapping(chunkPositions, count);
+        }
+
+        private void ApplyChunkMapping(Vector2Int[] chunkPositions, int count)
+        {
             if (_chunkToIndexMap == null)
             {
                 _chunkToIndexMap = new Dictionary<Vector2Int, int>();
             }
 
+            ClearDistanceCache();
             _chunkToIndexMap.Clear();
+
+            var processedChunks = new HashSet<ChunkInstance>();
 
             for (int i = 0; i < count && i < chunkPositions.Length; i++)
             {
-                _chunkToIndexMap[chunkPositions[i]] = i;
+                Vector2Int representativePos = chunkPositions[i];
+
+                if (!_mapGenerator.PlacedChunks.TryGetValue(representativePos, out ChunkInstance chunk))
+                {
+                    Debug.LogWarning($"[OxygenDepletionManager] 청크 {representativePos}를 찾을 수 없습니다.");
+                    continue;
+                }
+
+                if (!processedChunks.Add(chunk))
+                {
+                    continue;
+                }
+
+                int width = chunk.ChunkData.ChunkWidth;
+                int height = chunk.ChunkData.ChunkHeight;
+
+                for (int dy = 0; dy < height; dy++)
+                {
+                    for (int dx = 0; dx < width; dx++)
+                    {
+                        Vector2Int cellPos = representativePos + new Vector2Int(dx, dy);
+                        _chunkToIndexMap[cellPos] = i;
+                    }
+                }
             }
 
-            Debug.Log($"[OxygenDepletionManager] 클라이언트 매핑 완료: {_chunkToIndexMap.Count}개");
+            Debug.Log($"[OxygenDepletionManager] 클라이언트 매핑 적용 완료: {_chunkToIndexMap.Count}개");
         }
 
         /// <summary>
@@ -215,6 +261,7 @@ namespace ProjectVoid.Map
                 Debug.LogWarning("[OxygenDepletionManager] MapGenerator 또는 PlacedChunks가 null입니다!");
                 return;
             }
+            ClearDistanceCache();
 
             int activatedCount = 0;
             foreach (var chunkPos in _mapGenerator.PlacedChunks.Keys)
@@ -242,7 +289,7 @@ namespace ProjectVoid.Map
             // 1. Central 타입 청크 우선 검색
             foreach (var kvp in _mapGenerator.PlacedChunks)
             {
-                if (kvp.Value.ChunkData.ChunkType == EChunkType.Central)
+                if (kvp.Value.ChunkData.ChunkType == ChunkType.Central)
                 {
                     Debug.Log($"[OxygenDepletionManager] Central 청크 발견: {kvp.Key}");
                     return kvp.Key;
@@ -268,11 +315,17 @@ namespace ProjectVoid.Map
         }
 
         #endregion
-
         #region Fusion Lifecycle
 
         public override void Spawned()
         {
+            // Why: NetworkObject를 씬 전환 시에도 유지하려면 Runner.MakeDontDestroyOnLoad 사용
+            // Why: 서버에서만 호출 - 클라이언트에서는 assertion 경고가 발생할 수 있음
+            if (HasStateAuthority)
+            {
+                Runner.MakeDontDestroyOnLoad(gameObject);
+            }
+            
             if (_redLights == null)
             {
                 _redLights = new Dictionary<Vector2Int, List<GameObject>>();
@@ -288,6 +341,11 @@ namespace ProjectVoid.Map
                 _warningChunks = new HashSet<Vector2Int>();
             }
 
+            if (_cachedDistancesByPhase == null)
+            {
+                _cachedDistancesByPhase = new Dictionary<int, Dictionary<ChunkInstance, int>>();
+            }
+
             Debug.Log($"[OxygenDepletionManager] Spawned - HasStateAuthority={HasStateAuthority}");
 
             // Why: 클라이언트는 나중에 맵이 렌더링되면 InitializeForClient()가 호출됨
@@ -301,7 +359,17 @@ namespace ProjectVoid.Map
             _mapGenerator = mapGenerator;
             _mapSettings = mapSettings;
 
-            InitializeChunkIndexMap();
+            if (_pendingChunkPositions != null)
+            {
+                Debug.Log("[OxygenDepletionManager] 보류된 청크 매핑 정보를 적용합니다.");
+                ApplyChunkMapping(_pendingChunkPositions, _pendingChunkCount);
+                _pendingChunkPositions = null;
+                _pendingChunkCount = 0;
+            }
+            else
+            {
+                InitializeChunkIndexMap();
+            }
 
             Debug.Log($"[OxygenDepletionManager] 클라이언트 초기화 완료");
         }
@@ -313,13 +381,18 @@ namespace ProjectVoid.Map
 
             if (!HasStateAuthority) return;
 
+            // Why: 초기화되지 않았으면 아무것도 하지 않음 (맵 생성 전)
+            if (_gameStateManager == null || _mapGenerator == null) return;
+
             int currentPhase = _gameStateManager.CurrentPhase;
+            bool phaseAdvanced = false;
 
             // Phase가 변경되고 Phase 2 이상일 때만 맵 축소
             if (currentPhase > LastProcessedPhase && currentPhase >= 2)
             {
                 ShrinkMap(currentPhase);
                 LastProcessedPhase = currentPhase;
+                phaseAdvanced = true;
 
                 // Phase 변경 시 모든 경고 제거
                 _warningChunks.Clear();
@@ -328,6 +401,7 @@ namespace ProjectVoid.Map
                     WarningZoneMask.Set(i, false);
                 }
                 _lastWarningPhase = 0;
+                ClearDistanceCache();
                 RPC_SyncWarningZone();
             }
 
@@ -335,7 +409,7 @@ namespace ProjectVoid.Map
             float timeToNext = _gameStateManager.TimeToNextPhase;
             int nextPhase = currentPhase + 1;
 
-            if (timeToNext > 0f && timeToNext <= _warningDuration && _lastWarningPhase != nextPhase)
+            if (!phaseAdvanced && timeToNext > 0f && timeToNext <= _warningDuration && _lastWarningPhase != nextPhase)
             {
                 PreviewNextPhaseWarning(nextPhase);
                 _lastWarningPhase = nextPhase;
@@ -420,7 +494,7 @@ namespace ProjectVoid.Map
             if (targetCount == 0) return result;
 
             // 2. ChunkInstance 거리 계산
-            var chunkInstanceDistances = CalculateChunkInstanceDistances();
+            var chunkInstanceDistances = GetOrCalculateDistances(phase);
             if (chunkInstanceDistances.Count == 0) return result;
 
             // 3. 거리별로 그룹화
@@ -510,7 +584,7 @@ namespace ProjectVoid.Map
             bool isFinalPhase = _gameStateManager.GetShrinkRateForPhase(phase) >= 1.0f;
 
             // ChunkInstance 단위로 거리 계산
-            var chunkInstanceDistances = CalculateChunkInstanceDistances();
+            var chunkInstanceDistances = GetOrCalculateDistances(phase);
 
             if (chunkInstanceDistances.Count == 0)
             {
@@ -650,6 +724,34 @@ namespace ProjectVoid.Map
 
             Debug.Log($"[OxygenDepletionManager] Start Chunk로부터 {distances.Count}개 ChunkInstance까지 거리 계산 완료");
             return distances;
+        }
+
+        /// <summary>
+        /// Phase별 BFS 결과를 캐싱하여 반복 계산을 줄입니다.
+        /// </summary>
+        private Dictionary<ChunkInstance, int> GetOrCalculateDistances(int phase)
+        {
+            if (_cachedDistancesByPhase == null)
+            {
+                _cachedDistancesByPhase = new Dictionary<int, Dictionary<ChunkInstance, int>>();
+            }
+
+            if (_cachedDistancesByPhase.TryGetValue(phase, out var cached))
+            {
+                return cached;
+            }
+
+            var distances = CalculateChunkInstanceDistances();
+            _cachedDistancesByPhase[phase] = distances;
+            return distances;
+        }
+
+        /// <summary>
+        /// BFS 캐시를 초기화합니다 (맵 상태 변경 시 호출).
+        /// </summary>
+        private void ClearDistanceCache()
+        {
+            _cachedDistancesByPhase?.Clear();
         }
 
         /// <summary>
@@ -965,7 +1067,7 @@ namespace ProjectVoid.Map
             foreach (var player in Runner.ActivePlayers)
             {
                 // Why: Server 모드에서는 서버 자신을 제외
-                if (Runner.GameMode == GameMode.Server && player == Runner.LocalPlayer)
+                if (Runner.GameMode == Fusion.GameMode.Server && player == Runner.LocalPlayer)
                 {
                     continue;
                 }
@@ -1205,6 +1307,11 @@ namespace ProjectVoid.Map
         /// </summary>
         private void ClearAllRedLights()
         {
+            // Why: OnDestroy는 객체가 같은 틱에서 Spawn/Despawn될 때도 호출될 수 있음
+            // 이 경우 _redLights가 아직 초기화되지 않았을 수 있음
+            if (_redLights == null)
+                return;
+
             foreach (var kvp in _redLights)
             {
                 foreach (var light in kvp.Value)

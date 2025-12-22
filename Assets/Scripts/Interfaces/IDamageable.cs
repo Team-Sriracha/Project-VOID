@@ -1,4 +1,4 @@
-using Fusion;
+﻿using Fusion;
 
 /// <summary>
 /// 데미지를 받을 수 있는 오브젝트가 구현해야 하는 인터페이스입니다.

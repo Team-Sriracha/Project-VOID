@@ -1,5 +1,6 @@
-using Fusion;
+﻿using Fusion;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using System.Collections.Generic;
 
 namespace ProjectVoid.Map
@@ -52,8 +53,11 @@ namespace ProjectVoid.Map
 
         public override void Spawned()
         {
+            // Why: NetworkObject를 씬 전환 시에도 유지하려면 Runner.MakeDontDestroyOnLoad 사용
+            // Why: 서버에서만 호출 - 클라이언트에서는 assertion 경고가 발생할 수 있음
             if (HasStateAuthority)
             {
+                Runner.MakeDontDestroyOnLoad(gameObject);
                 // Why: LootboxParent를 일반 GameObject로 생성
                 SpawnLootBoxParent();
             }
@@ -93,7 +97,21 @@ namespace ProjectVoid.Map
             GameObject parentObj = new GameObject("LootboxParent");
             _lootBoxParent = parentObj.transform;
 
+            // Why: Multi-Peer 환경에서 LootboxParent를 Runner의 씬으로 이동하여 Physics 충돌 보장
+            MoveToRunnerScene(parentObj);
+
             LogDebug("LootBoxParent 생성 완료");
+        }
+
+        /// <summary>
+        /// Multi-Peer 환경에서 GameObject를 Runner의 씬으로 이동합니다.
+        /// </summary>
+        private void MoveToRunnerScene(GameObject obj)
+        {
+            if (obj == null) return;
+            if (Runner == null || !Runner.SimulationUnityScene.IsValid()) return;
+
+            SceneManager.MoveGameObjectToScene(obj, Runner.SimulationUnityScene);
         }
 
         #endregion

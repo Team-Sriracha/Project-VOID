@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.EventSystems;
 
@@ -31,6 +31,10 @@ public class PlayerInputHandler : MonoBehaviour
 
     private Camera _mainCamera;
     private LayerMask _groundLayer;
+
+    // Why: 매 프레임 List 할당 방지 - 캐싱하여 재사용
+    private readonly System.Collections.Generic.List<UnityEngine.EventSystems.RaycastResult> _raycastResults 
+        = new System.Collections.Generic.List<UnityEngine.EventSystems.RaycastResult>(16);
 
     #endregion
 
@@ -72,6 +76,7 @@ public class PlayerInputHandler : MonoBehaviour
         if (GameStateManager.Instance != null && GameStateManager.Instance.Object != null 
             && GameStateManager.Instance.Object.IsValid && GameStateManager.Instance.IsGameEnded)
         {
+            Debug.LogWarning("[PlayerInputHandler] Input blocked - IsGameEnded is true!");
             return new NetworkInputData(); // 빈 입력 반환
         }
 
@@ -179,11 +184,11 @@ public class PlayerInputHandler : MonoBehaviour
             position = Mouse.current.position.ReadValue()
         };
 
-        var results = new System.Collections.Generic.List<UnityEngine.EventSystems.RaycastResult>();
-        EventSystem.current.RaycastAll(pointerData, results);
+        _raycastResults.Clear();
+        EventSystem.current.RaycastAll(pointerData, _raycastResults);
 
         // Why: 아이템 관련 UI 컴포넌트가 있으면 차단
-        foreach (var result in results)
+        foreach (var result in _raycastResults)
         {
             if (result.gameObject.GetComponent<ItemSlotUI>() != null ||
                 result.gameObject.GetComponent<ItemPickupEntry>() != null ||

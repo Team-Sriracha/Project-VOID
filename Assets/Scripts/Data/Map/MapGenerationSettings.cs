@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 
 namespace ProjectVoid.Map
 {
@@ -8,7 +8,7 @@ namespace ProjectVoid.Map
     [System.Serializable]
     public struct MapTemplateSet
     {
-        public EGameMode GameMode;
+        public GameMode GameMode;
         public int MinPlayers;
         public int MaxPlayers;
         public MapLayoutTemplate[] Templates;
@@ -142,7 +142,7 @@ namespace ProjectVoid.Map
         /// <param name="mode">게임 모드</param>
         /// <param name="playerCount">플레이어 수</param>
         /// <returns>해당 조건에 맞는 템플릿 배열, 없으면 기본 템플릿</returns>
-        public MapLayoutTemplate[] GetTemplatesForMode(EGameMode mode, int playerCount)
+        public MapLayoutTemplate[] GetTemplatesForMode(GameMode mode, int playerCount)
         {
             if (_templateSets == null || _templateSets.Length == 0)
             {

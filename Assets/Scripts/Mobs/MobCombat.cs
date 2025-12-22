@@ -1,4 +1,4 @@
-using Fusion;
+﻿using Fusion;
 using UnityEngine;
 
 /// <summary>
@@ -223,7 +223,7 @@ public class MobCombat : NetworkBehaviour, IDamageable
         // Why: MobAI 상태를 Dead로 변경
         if (_mobAI != null)
         {
-            _mobAI.SetState(EMonsterState.Dead);
+            _mobAI.SetState(MonsterState.Dead);
         }
 
         // Why: 처치자에게 XP 보상 지급
@@ -327,7 +327,7 @@ public class MobCombat : NetworkBehaviour, IDamageable
         // Why: MobAI 상태를 Idle로 변경
         if (_mobAI != null)
         {
-            _mobAI.SetState(EMonsterState.Idle);
+            _mobAI.SetState(MonsterState.Idle);
             _mobAI.ResetAI();
         }
 
