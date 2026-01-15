@@ -278,7 +278,6 @@ public class ServerMonitorHttpServer : MonoBehaviour
                     if (session.Properties.TryGetValue("GameMode", out var mode))
                     {
                         data.GameMode = mode.Value;
-                        data.MaxPlayers = GetMaxPlayersByGameMode(mode.Value);
                     }
                     if (session.Properties.TryGetValue("RoomCode", out var code))
                         data.RoomCode = code.Value;
@@ -296,6 +295,21 @@ public class ServerMonitorHttpServer : MonoBehaviour
                         int.TryParse(elapsed.Value, out data.ElapsedTime);
                     if (session.Properties.TryGetValue("IsGameEnded", out var ended))
                         data.IsGameEnded = ended.Value?.ToLower() == "true";
+                    
+                    // MaxPlayers 우선순위: TargetPlayers > GameMode > 기본값 8
+                    if (session.Properties.TryGetValue("TargetPlayers", out var target) && int.TryParse(target.Value, out int targetVal))
+                    {
+                         data.MaxPlayers = targetVal;
+                    }
+                    else
+                    {
+                         data.MaxPlayers = GetMaxPlayersByGameMode(data.GameMode);
+                    }
+                }
+                else
+                {
+                     // Properties가 없으면 기본값
+                     data.MaxPlayers = 8;
                 }
 
                 sessionList.Add(data);
