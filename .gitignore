@@ -11,3 +11,6 @@
 # Assets/Shaders 폴더의 .shader 파일만 허용 (.meta 제외)
 !Assets/Shaders/
 !Assets/Shaders/**/*.shader
+
+
+.omx/
