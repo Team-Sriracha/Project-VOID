@@ -12,9 +12,8 @@
 !Assets/Shaders/
 !Assets/Shaders/**/*.shader
 
-# 문서 폴더 허용
-!Docs/
-!Docs/**/*.md
+# Docs 폴더 제외
+Docs/
 
 
 .omx/
