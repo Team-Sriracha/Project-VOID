@@ -120,7 +120,7 @@ public class NetworkedItem : NetworkBehaviour
     public override void OnStartClient()
     {
         base.OnStartClient();
-        FOVStencilMaterialRuntimeApplier.ApplyToHierarchy(gameObject);
+        FOVRevealAgent.Ensure(gameObject, FOVRevealMode.StencilOnly);
         
         // Tier 변경 콜백 구독 (클라이언트에서 등급 동기화 시 이펙트 갱신)
         Tier.OnChange += OnTierChanged;
@@ -627,6 +627,22 @@ public class NetworkedItem : NetworkBehaviour
             return;
         }
 
+        if (_itemData is ConsumableItemData consumableData)
+        {
+            if (TryConsumeItem(conn.FirstObject.gameObject, consumableData))
+            {
+                Debug.Log($"[NetworkedItem] Player가 {_itemData.ItemName} 소모");
+                TargetRpc_PlayPickupAudio(conn, ItemID.Value, transform.position);
+                ServerManager.Despawn(gameObject);
+            }
+            else
+            {
+                Debug.Log($"[NetworkedItem] {_itemData.ItemName} 소모 조건을 만족하지 않아 픽업하지 않음");
+            }
+
+            return;
+        }
+
         PlayerInventory inventory = conn.FirstObject.GetComponent<PlayerInventory>();
         if (inventory == null)
         {
@@ -642,6 +658,13 @@ public class NetworkedItem : NetworkBehaviour
         {
             Debug.Log($"[NetworkedItem] Player 인벤토리가 가득 차거나 이미 소지중인 아이템");
         }
+    }
+
+    [TargetRpc]
+    private void TargetRpc_PlayPickupAudio(NetworkConnection conn, string itemId, Vector3 pickupPosition)
+    {
+        AudioCue pickupAudioCue = ItemDatabase.GetItem(itemId)?.PickupAudioCue;
+        AudioManager.Instance?.PlayWorldOneShot(pickupAudioCue, pickupPosition);
     }
 
     #endregion
@@ -692,6 +715,63 @@ public class NetworkedItem : NetworkBehaviour
                 _networkTransform.enabled = shouldEnable;
             }
         }
+    }
+
+    private bool TryConsumeItem(GameObject playerObject, ConsumableItemData consumableData)
+    {
+        if (playerObject == null || consumableData == null)
+        {
+            return false;
+        }
+
+        return consumableData.ConsumableType switch
+        {
+            ConsumableType.Health => TryConsumeHealthItem(playerObject, consumableData),
+            ConsumableType.Ammo => TryConsumeAmmoItem(playerObject, consumableData),
+            _ => false
+        };
+    }
+
+    private bool TryConsumeHealthItem(GameObject playerObject, ConsumableItemData consumableData)
+    {
+        PlayerCombat combat = playerObject.GetComponent<PlayerCombat>();
+        if (combat == null || !combat.IsAlive)
+        {
+            return false;
+        }
+
+        float previousHP = combat.HP.Value;
+        if (previousHP >= combat.MaxHP)
+        {
+            return false;
+        }
+
+        combat.ApplyHeal(consumableData.Amount);
+        return combat.HP.Value > previousHP;
+    }
+
+    private bool TryConsumeAmmoItem(GameObject playerObject, ConsumableItemData consumableData)
+    {
+        NetworkedWeapon weapon = playerObject.GetComponent<NetworkedWeapon>();
+        if (weapon == null || weapon.CurrentWeaponData is not GunData gunData)
+        {
+            return false;
+        }
+
+        int ammoAmount = Mathf.Max(Mathf.RoundToInt(consumableData.Amount), 0);
+        if (ammoAmount <= 0)
+        {
+            return false;
+        }
+
+        int previousTotalAmmo = weapon.TotalAmmo.Value;
+        if (previousTotalAmmo >= gunData.MaxAmmo)
+        {
+            return false;
+        }
+
+        weapon.TotalAmmo.Value = Mathf.Clamp(previousTotalAmmo + ammoAmount, 0, gunData.MaxAmmo);
+        return weapon.TotalAmmo.Value > previousTotalAmmo;
     }
 
     #endregion

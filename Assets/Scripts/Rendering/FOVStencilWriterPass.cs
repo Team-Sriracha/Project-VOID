@@ -7,6 +7,12 @@ using UnityEngine.Rendering.Universal;
 /// </summary>
 public class FOVStencilWriterPass : ScriptableRenderPass
 {
+    public enum StencilMatrixSource
+    {
+        RevealStencil = 0,
+        Visual = 1,
+    }
+
     #region Constants
 
     private const string PASS_NAME = "FOV Stencil Writer";
@@ -16,14 +22,16 @@ public class FOVStencilWriterPass : ScriptableRenderPass
     #region Private Fields
 
     private readonly Material _stencilWriterMaterial;
+    private readonly StencilMatrixSource _matrixSource;
 
     #endregion
 
     #region Constructor
 
-    public FOVStencilWriterPass(Material stencilWriterMaterial)
+    public FOVStencilWriterPass(Material stencilWriterMaterial, StencilMatrixSource matrixSource)
     {
         _stencilWriterMaterial = stencilWriterMaterial;
+        _matrixSource = matrixSource;
         profilingSampler = new ProfilingSampler(PASS_NAME);
     }
 
@@ -34,9 +42,7 @@ public class FOVStencilWriterPass : ScriptableRenderPass
     [System.Obsolete("Use RecordRenderGraph instead.")]
     public override void OnCameraSetup(CommandBuffer cmd, ref RenderingData renderingData)
     {
-        ConfigureTarget(
-            renderingData.cameraData.renderer.cameraColorTargetHandle,
-            renderingData.cameraData.renderer.cameraDepthTargetHandle);
+        ConfigureTarget(renderingData.cameraData.renderer.cameraDepthTargetHandle);
     }
 
     #endregion
@@ -46,13 +52,16 @@ public class FOVStencilWriterPass : ScriptableRenderPass
     [System.Obsolete("Use RecordRenderGraph instead.")]
     public override void Execute(ScriptableRenderContext context, ref RenderingData renderingData)
     {
-        if (_stencilWriterMaterial == null || !FOVRenderPass.HasFOVMeshData)
+        if (_stencilWriterMaterial == null || !FOVRenderData.HasFOVMeshData)
         {
             return;
         }
 
         CommandBuffer cmd = CommandBufferPool.Get(PASS_NAME);
-        cmd.DrawMesh(FOVRenderPass.FOVMesh, FOVRenderPass.FOVStencilMatrix, _stencilWriterMaterial, 0, 0);
+        Matrix4x4 matrix = _matrixSource == StencilMatrixSource.RevealStencil
+            ? FOVRenderData.FOVRevealStencilMatrix
+            : FOVRenderData.FOVVisualMatrix;
+        cmd.DrawMesh(FOVRenderData.FOVMesh, matrix, _stencilWriterMaterial, 0, 0);
         context.ExecuteCommandBuffer(cmd);
         CommandBufferPool.Release(cmd);
     }

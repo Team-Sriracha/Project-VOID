@@ -181,7 +181,7 @@ public class PlayerController : TickNetworkBehaviour
     public override void OnStartClient()
     {
         base.OnStartClient();
-        FOVStencilMaterialRuntimeApplier.ApplyToHierarchy(gameObject);
+        FOVRevealAgent.Ensure(gameObject, FOVRevealMode.StencilOnly);
 
         if (IsOwner && _groundRingPrefab != null)
         {

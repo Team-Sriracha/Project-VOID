@@ -21,6 +21,7 @@ public class PlayerInputHandler : MonoBehaviour
     private InputActionAsset _runtimeInputActions;
     private InputAction _moveAction;
     private InputAction _dashAction;
+    private InputAction _lookAction;
     private InputAction _aimAction;
     private InputAction _attackAction;
     private InputAction _reloadAction;
@@ -28,6 +29,7 @@ public class PlayerInputHandler : MonoBehaviour
 
     private bool _wasStickFirePressed;
     private Vector2 _currentStickInput;
+    private Vector3 _lastMobileAimDirection;
     private const float STICK_AIM_THRESHOLD = 0.2f;
     private const float STICK_FIRE_THRESHOLD = 0.9f;
 
@@ -55,6 +57,7 @@ public class PlayerInputHandler : MonoBehaviour
         {
             _moveAction = _playerActionMap.FindAction("Move");
             _dashAction = _playerActionMap.FindAction("Dash");
+            _lookAction = _playerActionMap.FindAction("Look");
             _aimAction = _playerActionMap.FindAction("Aim");
             _attackAction = _playerActionMap.FindAction("Attack");
             _reloadAction = _playerActionMap.FindAction("Reload");
@@ -79,16 +82,8 @@ public class PlayerInputHandler : MonoBehaviour
 
     private void Update()
     {
-        // 모바일 조준은 New Input System의 rightStick 값만 사용합니다.
-        // 마우스/포인터 이벤트를 섞지 않아 입력 경로를 단순화합니다.
-        if (Gamepad.current != null)
-        {
-            _currentStickInput = Gamepad.current.rightStick.ReadValue();
-        }
-        else
-        {
-            _currentStickInput = Vector2.zero;
-        }
+        _currentStickInput = ReadCurrentStickInput();
+        UpdateMobileAimState();
     }
 
     private void LateUpdate()
@@ -111,7 +106,7 @@ public class PlayerInputHandler : MonoBehaviour
     {
         if (IsMobileInputMode())
         {
-            return _currentStickInput.magnitude > STICK_AIM_THRESHOLD;
+            return IsMobileAimHeld();
         }
 
         bool aiming = IsAiming();
@@ -271,12 +266,62 @@ public class PlayerInputHandler : MonoBehaviour
 
     private Vector3 GetMobileAimDirection()
     {
+        if (MobileAimInputState.HasTracker)
+        {
+            return IsMobileAimHeld() ? _lastMobileAimDirection : Vector3.zero;
+        }
+
         if (_currentStickInput.magnitude > STICK_AIM_THRESHOLD)
         {
             return new Vector3(_currentStickInput.x, 0f, _currentStickInput.y).normalized;
         }
 
         return Vector3.zero;
+    }
+
+    private Vector2 ReadCurrentStickInput()
+    {
+        if (_lookAction != null && _lookAction.activeControl?.device is Gamepad)
+        {
+            return _lookAction.ReadValue<Vector2>();
+        }
+
+        if (Gamepad.current != null)
+        {
+            return Gamepad.current.rightStick.ReadValue();
+        }
+
+        return Vector2.zero;
+    }
+
+    private void UpdateMobileAimState()
+    {
+        if (!IsMobileInputMode())
+        {
+            _lastMobileAimDirection = Vector3.zero;
+            return;
+        }
+
+        if (!IsMobileAimHeld())
+        {
+            _lastMobileAimDirection = Vector3.zero;
+            return;
+        }
+
+        if (_currentStickInput.magnitude > STICK_AIM_THRESHOLD)
+        {
+            _lastMobileAimDirection = new Vector3(_currentStickInput.x, 0f, _currentStickInput.y).normalized;
+        }
+    }
+
+    private bool IsMobileAimHeld()
+    {
+        if (MobileAimInputState.HasTracker)
+        {
+            return MobileAimInputState.IsAimStickPressed;
+        }
+
+        return _currentStickInput.magnitude > STICK_AIM_THRESHOLD;
     }
 
     private bool IsMobileInputMode()
@@ -326,6 +371,19 @@ public class PlayerInputHandler : MonoBehaviour
 
         return false;
     }
+
+    #endregion
+}
+
+/// <summary>
+/// 모바일 우측 조준 스틱의 런타임 상태를 공유합니다.
+/// </summary>
+public static class MobileAimInputState
+{
+    #region Properties
+
+    public static bool HasTracker { get; set; }
+    public static bool IsAimStickPressed { get; set; }
 
     #endregion
 }

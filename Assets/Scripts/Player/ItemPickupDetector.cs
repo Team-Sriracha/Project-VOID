@@ -8,6 +8,12 @@ using UnityEngine;
 /// </summary>
 public class ItemPickupDetector : MonoBehaviour
 {
+    #region Constants
+
+    private const float CONSUMABLE_AUTO_PICKUP_RETRY_INTERVAL = 0.25f;
+
+    #endregion
+
     #region Serialized Fields
 
     [Header("감지 설정")]
@@ -35,6 +41,7 @@ public class ItemPickupDetector : MonoBehaviour
 
     private List<NetworkedItem> _nearbyItems = new List<NetworkedItem>();
     private List<NetworkedItem> _previousItems = new List<NetworkedItem>();
+    private Dictionary<int, float> _consumablePickupRequestTimes = new Dictionary<int, float>();
     private NetworkObject _networkObject;
     private float _detectionTimer;
 
@@ -74,6 +81,9 @@ public class ItemPickupDetector : MonoBehaviour
         _nearbyItems.Clear();
 
         Vector3 detectPos = transform.position + Vector3.up * 1f;
+        float currentTime = Time.time;
+
+        CleanupExpiredConsumableRequests(currentTime);
         
         // Why: Transform이 네트워크로 업데이트된 후 Collider 위치가 동기화되지 않을 수 있음
         // Physics.SyncTransforms()를 호출하여 모든 Collider 위치를 Transform에 동기화
@@ -90,10 +100,10 @@ public class ItemPickupDetector : MonoBehaviour
                 // Why: IsDropped가 true인 아이템만 픽업 가능 (드랍된 상태)
                 if (item.IsDropped.Value)
                 {
-                    // Why: 소모 아이템(Consumable)은 자동 픽업되므로 UI에 표시하지 않음
                     ItemData itemData = item.GetItemData();
                     if (itemData != null && itemData is ConsumableItemData)
                     {
+                        TryRequestConsumablePickup(item, currentTime);
                         continue;
                     }
                     
@@ -135,6 +145,60 @@ public class ItemPickupDetector : MonoBehaviour
     {
         _previousItems.Clear();
         _previousItems.AddRange(_nearbyItems);
+    }
+
+    /// <summary>
+    /// 소모 아이템 자동 픽업 요청을 전송합니다.
+    /// </summary>
+    private void TryRequestConsumablePickup(NetworkedItem item, float currentTime)
+    {
+        if (item == null || item.NetworkObject == null || !item.NetworkObject.IsSpawned)
+        {
+            return;
+        }
+
+        int objectId = item.NetworkObject.ObjectId;
+        if (_consumablePickupRequestTimes.TryGetValue(objectId, out float nextRequestTime) &&
+            currentTime < nextRequestTime)
+        {
+            return;
+        }
+
+        _consumablePickupRequestTimes[objectId] = currentTime + CONSUMABLE_AUTO_PICKUP_RETRY_INTERVAL;
+        item.RPC_RequestPickup();
+    }
+
+    /// <summary>
+    /// 오래된 자동 픽업 요청 기록을 정리합니다.
+    /// </summary>
+    private void CleanupExpiredConsumableRequests(float currentTime)
+    {
+        if (_consumablePickupRequestTimes.Count == 0)
+        {
+            return;
+        }
+
+        List<int> expiredIds = null;
+        foreach (KeyValuePair<int, float> pair in _consumablePickupRequestTimes)
+        {
+            if (pair.Value > currentTime)
+            {
+                continue;
+            }
+
+            expiredIds ??= new List<int>();
+            expiredIds.Add(pair.Key);
+        }
+
+        if (expiredIds == null)
+        {
+            return;
+        }
+
+        for (int i = 0; i < expiredIds.Count; i++)
+        {
+            _consumablePickupRequestTimes.Remove(expiredIds[i]);
+        }
     }
 
     #endregion

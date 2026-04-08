@@ -15,6 +15,12 @@ using UnityEngine.UI;
 /// </summary>
 public class LoadingUIManager : MonoBehaviour
 {
+    #region Constants
+
+    private const int COUNTDOWN_TICK_START_SECOND = 3;
+
+    #endregion
+
     #region Singleton
 
     private static LoadingUIManager _instance;
@@ -35,6 +41,7 @@ public class LoadingUIManager : MonoBehaviour
     [SerializeField] private TextMeshProUGUI _countdownText;
 
     [Header("사운드")]
+    [SerializeField] private AudioCue _countdownTickAudioCue;
     [SerializeField] private AudioCue _countdownStartAudioCue;
 
     #endregion
@@ -221,7 +228,6 @@ public class LoadingUIManager : MonoBehaviour
             _isLoading = false;
         }
 
-        AudioManager.Instance?.PlayUi(_countdownStartAudioCue);
         _countdownCoroutine = StartCoroutine(CountdownRoutine(durationSeconds));
     }
 
@@ -557,15 +563,25 @@ public class LoadingUIManager : MonoBehaviour
     private IEnumerator CountdownRoutine(float durationSeconds)
     {
         float remaining = Mathf.Max(0f, durationSeconds);
+        int lastAnnouncedSecond = -1;
 
         while (remaining > 0f)
         {
-            _countdownText.text = Mathf.CeilToInt(remaining).ToString();
+            int countdownSecond = Mathf.CeilToInt(remaining);
+            _countdownText.text = countdownSecond.ToString();
+
+            if (countdownSecond != lastAnnouncedSecond)
+            {
+                TryPlayCountdownTick(countdownSecond);
+                lastAnnouncedSecond = countdownSecond;
+            }
+
             yield return null;
             remaining -= Time.deltaTime;
         }
 
         _countdownText.text = "게임 시작!";
+        AudioManager.Instance?.PlayUi(_countdownStartAudioCue);
         yield return new WaitForSeconds(0.5f);
 
         // Fade out session waiting panel
@@ -585,6 +601,16 @@ public class LoadingUIManager : MonoBehaviour
 
         if (_sessionWaitingPanel != null) _sessionWaitingPanel.SetActive(false);
         _countdownCoroutine = null;
+    }
+
+    private void TryPlayCountdownTick(int countdownSecond)
+    {
+        if (countdownSecond > COUNTDOWN_TICK_START_SECOND)
+        {
+            return;
+        }
+
+        AudioManager.Instance?.PlayUi(_countdownTickAudioCue);
     }
 
     #endregion

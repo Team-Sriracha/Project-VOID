@@ -56,7 +56,8 @@ public class FOVMeshGenerator
     #region Mesh Generation
 
     public void UpdateMesh(float[] hitDistances, float startAngle, float endAngle,
-        Vector3 origin, Vector3 forward, bool enableSoftEdge = true, float edgeSoftness = 0.5f)
+        Vector3 visualOrigin, Vector3 revealStencilOrigin, Vector3 forward,
+        bool enableSoftEdge = true, float edgeSoftness = 0.5f)
     {
         if (_mesh == null) return;
 
@@ -125,8 +126,9 @@ public class FOVMeshGenerator
 
         ApplyMesh(vertexCount, triangleCount);
 
-        Matrix4x4 matrix = Matrix4x4.TRS(origin, Quaternion.identity, Vector3.one);
-        FOVRenderPass.SetFOVMeshData(_mesh, matrix);
+        Matrix4x4 visualMatrix = Matrix4x4.TRS(visualOrigin, Quaternion.identity, Vector3.one);
+        Matrix4x4 revealStencilMatrix = Matrix4x4.TRS(revealStencilOrigin, Quaternion.identity, Vector3.one);
+        FOVRenderData.SetFOVMeshData(_mesh, visualMatrix, revealStencilMatrix);
         
 
     }
@@ -175,12 +177,12 @@ public class FOVMeshGenerator
 
     public void Hide()
     {
-        FOVRenderPass.ClearFOVMeshData();
+        FOVRenderData.ClearFOVMeshData();
     }
 
     public void Destroy()
     {
-        FOVRenderPass.ClearFOVMeshData();
+        FOVRenderData.ClearFOVMeshData();
         if (_mesh != null)
         {
             Object.Destroy(_mesh);

@@ -1,4 +1,4 @@
-Shader "Hidden/ProjectVOID/FOVStencilWriter"
+Shader "Hidden/ProjectVOID/FOVOverlayStencilWriter"
 {
     SubShader
     {
@@ -11,10 +11,10 @@ Shader "Hidden/ProjectVOID/FOVStencilWriter"
 
         Stencil
         {
-            Ref 1
+            Ref 2
             Comp Always
             Pass Replace
-            WriteMask 1
+            WriteMask 2
         }
 
         ColorMask 0

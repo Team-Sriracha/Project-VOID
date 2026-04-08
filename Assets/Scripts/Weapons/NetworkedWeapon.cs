@@ -12,6 +12,7 @@ public class NetworkedWeapon : NetworkBehaviour
     #region Constants
 
     private const float EMPTY_AMMO_FEEDBACK_COOLDOWN = 0.25f;
+    private const string FIRE_POINT_NAME = "FirePoint";
 
     #endregion
 
@@ -51,6 +52,7 @@ public class NetworkedWeapon : NetworkBehaviour
     private AimVisualizer _aimVisualizer;
     private PlayerAnimationController _animationController;
     private PlayerCardSystem _playerCardSystem;
+    private WeaponRecoilOffset _weaponRecoilOffset;
     
     // 타이머 (서버에서만 사용)
     private float _cooldownEndTime;
@@ -271,6 +273,11 @@ public class NetworkedWeapon : NetworkBehaviour
         _aimVisualizer = GetComponent<AimVisualizer>();
         _animationController = GetComponent<PlayerAnimationController>();
         _playerCardSystem = GetComponent<PlayerCardSystem>();
+        _weaponRecoilOffset = GetComponent<WeaponRecoilOffset>();
+        if (_weaponRecoilOffset == null)
+        {
+            _weaponRecoilOffset = gameObject.AddComponent<WeaponRecoilOffset>();
+        }
 
         if (_weaponData == null && _playerStats != null)
         {
@@ -303,6 +310,7 @@ public class NetworkedWeapon : NetworkBehaviour
         _wasSkillOnCooldown = SkillCooldownRemainingTime > 0f;
 
         ResetFirePoint();
+        RefreshWeaponRecoilBinding();
         TimeManager.OnTick += OnTick;
     }
 
@@ -315,6 +323,8 @@ public class NetworkedWeapon : NetworkBehaviour
         {
             TimeManager.OnTick -= OnTick;
         }
+
+        _weaponRecoilOffset?.ResetAndClear();
     }
 
     private void OnTick()
@@ -388,6 +398,8 @@ public class NetworkedWeapon : NetworkBehaviour
             }
         }
 
+        RefreshWeaponRecoilBinding();
+
         // 클라이언트에 무기 데이터 동기화 (탄약은 SyncVar가 자동 동기화)
         RPC_SyncWeaponData(weaponID);
     }
@@ -418,6 +430,8 @@ public class NetworkedWeapon : NetworkBehaviour
             {
                 _animationController.SetWeaponAnimator(null);
             }
+
+            RefreshWeaponRecoilBinding();
             
             // Why: 클라이언트에서도 무기 해제 이벤트 발생 (MobileUIManager 등에서 구독)
             OnWeaponChanged?.Invoke(GetWeaponTypeFromData(null));
@@ -435,6 +449,8 @@ public class NetworkedWeapon : NetworkBehaviour
             {
                 _animationController.SetWeaponAnimator(weaponData.OverrideController);
             }
+
+            RefreshWeaponRecoilBinding();
             
             // Why: 클라이언트에서도 무기 변경 이벤트 발생 (MobileUIManager 등에서 구독)
             WeaponType newWeaponType = GetWeaponTypeFromData(weaponData);
@@ -820,23 +836,15 @@ public class NetworkedWeapon : NetworkBehaviour
     #region Weapon Animation
 
     /// <summary>
-    /// FireCounter 변경 시 호출되어 무기 발사 애니메이션 재생 (모든 클라이언트)
+    /// FireCounter 변경 시 호출되어 발사 연출을 재생합니다.
     /// </summary>
     private void OnFireCounterChanged(int prev, int next, bool asServer)
     {
         if (asServer) return; // 클라이언트에서만 애니메이션 재생
 
-        if (_currentEquippedItem != null)
-        {
-            Animator weaponAnimator = _currentEquippedItem.GetComponentInChildren<Animator>();
-            if (weaponAnimator != null)
-            {
-                weaponAnimator.Play("Fire");
-            }
-        }
-
         if (_weaponData is GunData gunData)
         {
+            _weaponRecoilOffset?.PlayFireRecoil();
             AudioManager.Instance?.PlayWorldOneShot(gunData.FireAudioCue, GetAudioAnchor().position);
         }
     }
@@ -882,6 +890,8 @@ public class NetworkedWeapon : NetworkBehaviour
         {
             ResetFirePoint();
         }
+
+        RefreshWeaponRecoilBinding();
     }
 
     /// <summary>
@@ -889,6 +899,7 @@ public class NetworkedWeapon : NetworkBehaviour
     /// </summary>
     public void OnWeaponDetached()
     {
+        _weaponRecoilOffset?.ResetAndClear();
         _currentEquippedItem = null;
         ResetFirePoint();
     }
@@ -918,6 +929,70 @@ public class NetworkedWeapon : NetworkBehaviour
         }
 
         return transform;
+    }
+
+    private void RefreshWeaponRecoilBinding()
+    {
+        if (_weaponRecoilOffset == null)
+        {
+            return;
+        }
+
+        if (_weaponData is GunData gunData && _currentEquippedItem != null)
+        {
+            Transform recoilTarget = ResolveRecoilTarget();
+            if (recoilTarget != null)
+            {
+                _weaponRecoilOffset.Bind(recoilTarget, gunData);
+                return;
+            }
+        }
+
+        _weaponRecoilOffset.ResetAndClear();
+    }
+
+    private Transform ResolveRecoilTarget()
+    {
+        if (_currentEquippedItem == null)
+        {
+            return null;
+        }
+
+        Transform itemRoot = _currentEquippedItem.transform;
+        Renderer[] renderers = itemRoot.GetComponentsInChildren<Renderer>(true);
+        foreach (Renderer renderer in renderers)
+        {
+            if (renderer == null)
+            {
+                continue;
+            }
+
+            Transform candidate = renderer.transform;
+            if (candidate == null || candidate == itemRoot)
+            {
+                continue;
+            }
+
+            return candidate;
+        }
+
+        for (int i = 0; i < itemRoot.childCount; i++)
+        {
+            Transform child = itemRoot.GetChild(i);
+            if (child == null)
+            {
+                continue;
+            }
+
+            if (string.Equals(child.name, FIRE_POINT_NAME, System.StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            return child;
+        }
+
+        return itemRoot;
     }
 
     #endregion

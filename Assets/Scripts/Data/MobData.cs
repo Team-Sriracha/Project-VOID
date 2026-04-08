@@ -223,8 +223,28 @@ public class MobData : ScriptableObject
             return 0;
         }
 
-        int normalizedStep = Mathf.Clamp(sequenceStep, 0, _attackSequence.Length - 1);
+        int normalizedStep = sequenceStep % _attackSequence.Length;
+        if (normalizedStep < 0)
+        {
+            normalizedStep += _attackSequence.Length;
+        }
+
         return Mathf.Clamp(_attackSequence[normalizedStep], 0, _attackPatterns.Length - 1);
+    }
+
+    /// <summary>
+    /// 지정된 시퀀스 스텝에서 사용할 공격 패턴 데이터를 반환합니다.
+    /// </summary>
+    /// <param name="sequenceStep">시퀀스 스텝</param>
+    public MobAttackPatternData GetAttackPatternForSequenceStep(int sequenceStep)
+    {
+        if (_attackPatterns == null || _attackPatterns.Length == 0)
+        {
+            return null;
+        }
+
+        int patternIndex = GetAttackPatternIndexForSequenceStep(sequenceStep);
+        return GetAttackPattern(patternIndex);
     }
 
     #endregion

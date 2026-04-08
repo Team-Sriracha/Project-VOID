@@ -19,9 +19,11 @@ Shader "Custom/FOVClippedDecal"
         // FOV 스텐실 테스트 - Ref 1과 같을 때만 렌더링
         Stencil
         {
-            Ref 1
+            Ref 3
             Comp Equal
-            Pass Keep
+            ReadMask 1
+            WriteMask 2
+            Pass Replace
         }
 
         Pass

@@ -12,8 +12,8 @@ Shader "Custom/Toon FOV"
         // FOV Properties
         _DimColor ("Dim Color", Color) = (0.3, 0.3, 0.4, 1)
         _FadeWidth ("Fade Width", Range(0.5, 3)) = 1
+        [HideInInspector] _FOVRevealAnchorWS ("FOV Reveal Anchor WS", Vector) = (0, 0, 0, 0)
         [HideInInspector] _GlobalStencilComp ("Global Stencil Comp", Float) = 8
-
         // Blending state
         [HideInInspector] _Cull("__cull", Float) = 2.0
         [HideInInspector] _AlphaClip("__clip", Float) = 0.0
@@ -46,8 +46,11 @@ Shader "Custom/Toon FOV"
             // FOV Stencil - only on this pass
             Stencil
             {
-                Ref 1
+                Ref 3
                 Comp [_GlobalStencilComp]
+                ReadMask 1
+                WriteMask 2
+                Pass Replace
             }
 
             HLSLPROGRAM
@@ -129,8 +132,11 @@ Shader "Custom/Toon FOV"
             // FOV Stencil - only on this pass
             Stencil
             {
-                Ref 1
+                Ref 3
                 Comp [_GlobalStencilComp]
+                ReadMask 1
+                WriteMask 2
+                Pass Replace
             }
 
             Cull[_Cull]
@@ -166,6 +172,7 @@ Shader "Custom/Toon FOV"
                 float _OutlineWidth;
                 half4 _DimColor;
                 half _FadeWidth;
+                float4 _FOVRevealAnchorWS;
                 half _Cutoff;
             CBUFFER_END
 
@@ -212,6 +219,18 @@ Shader "Custom/Toon FOV"
                 int upperIndex = min(lowerIndex + 1, (int)_FOVHitDistanceCount - 1);
                 float interpolation = frac(samplePosition);
                 return lerp(_FOVHitDistances[lowerIndex], _FOVHitDistances[upperIndex], interpolation);
+            }
+
+            float2 GetRevealProjectedOffset(float3 positionWS)
+            {
+                if (_FOVRevealAnchorWS.w > 0.5)
+                {
+                    return _FOVRevealAnchorWS.xz - _FOVCenter.xz;
+                }
+
+                float projectedHeight = max(positionWS.y - _FOVBaseY, 0.0);
+                float2 projectedXZ = positionWS.xz + (_FOVProjectionOffset.xy * projectedHeight);
+                return projectedXZ - _FOVCenter.xz;
             }
 
             struct Attributes
@@ -302,9 +321,7 @@ Shader "Custom/Toon FOV"
                 // Apply FOV dimming - ONLY when FOV system is enabled (game view)
                 if (_FOVEnabled > 0.5 && _FOVRange > 1.0)
                 {
-                    float projectedHeight = max(input.positionWS.y - _FOVBaseY, 0.0);
-                    float2 projectedXZ = input.positionWS.xz + (_FOVProjectionOffset.xy * projectedHeight);
-                    float2 projectedOffset = projectedXZ - _FOVCenter.xz;
+                    float2 projectedOffset = GetRevealProjectedOffset(input.positionWS);
                     float dist = length(projectedOffset);
                     float boundaryDistance = SampleFOVBoundaryDistance(projectedOffset, dist);
                     float dimWidth = max(_FOVEdgeSoftness + _FadeWidth, 0.1);
@@ -343,6 +360,7 @@ Shader "Custom/Toon FOV"
             #pragma multi_compile_vertex _ _CASTING_PUNCTUAL_LIGHT_SHADOW
 
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+            #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/CommonMaterial.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Shadows.hlsl"
 
             TEXTURE2D(_MainTex);
@@ -424,6 +442,15 @@ Shader "Custom/Toon FOV"
             Name "DepthOnly"
             Tags { "LightMode" = "DepthOnly" }
 
+            Stencil
+            {
+                Ref 3
+                Comp [_GlobalStencilComp]
+                ReadMask 1
+                WriteMask 2
+                Pass Replace
+            }
+
             ZWrite On
             ColorMask R
             Cull[_Cull]
@@ -496,6 +523,15 @@ Shader "Custom/Toon FOV"
         {
             Name "DepthNormals"
             Tags { "LightMode" = "DepthNormals" }
+
+            Stencil
+            {
+                Ref 3
+                Comp [_GlobalStencilComp]
+                ReadMask 1
+                WriteMask 2
+                Pass Replace
+            }
 
             ZWrite On
             Cull[_Cull]
@@ -579,7 +615,7 @@ Shader "Custom/Toon FOV"
             HLSLPROGRAM
             #pragma target 2.0
             #pragma vertex MetaVertex
-            #pragma fragment MetaFragment
+            #pragma fragment ToonMetaFragment
 
             #pragma shader_feature EDITOR_VISUALIZATION
 
@@ -633,7 +669,7 @@ Shader "Custom/Toon FOV"
                 return output;
             }
 
-            half4 MetaFragment(Varyings input) : SV_Target
+            half4 ToonMetaFragment(Varyings input) : SV_Target
             {
                 half4 texColor = SAMPLE_TEXTURE2D(_MainTex, sampler_MainTex, input.uv);
                 half3 albedo = texColor.rgb * _Color.rgb;

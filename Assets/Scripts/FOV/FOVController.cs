@@ -45,8 +45,19 @@ public class FOVController : NetworkBehaviour
     [Header("재질")]
     [SerializeField] private Material _fovMaterial;
 
+    [Header("시야 표현 높이")]
     [Range(0.5f, 5.0f)]
     [SerializeField] private float _fovHeight = 2.5f;
+
+    [Header("공통 Reveal 스텐실 높이")]
+    [Tooltip("FOV 스텐실로 드러나는 모든 오브젝트에 공통으로 적용할 reveal plane 높이입니다.")]
+    [Range(0.5f, 6.0f)]
+    [SerializeField] private float _revealStencilHeight = 3.5f;
+
+    [Header("장애물 판정 높이")]
+    [Tooltip("벽 뒤가 밝아지는 현상을 막기 위해 실제 시야 차폐 판정에 사용할 높이입니다.")]
+    [Range(0.1f, 2.0f)]
+    [SerializeField] private float _obstacleSampleHeight = 0.9f;
 
     [Header("컴포넌트 참조")]
     [SerializeField] private PlayerAimController _aimController;
@@ -64,6 +75,7 @@ public class FOVController : NetworkBehaviour
     public float CurrentRange => _currentRange;
     public float CurrentAngle => _currentAngle;
     public LayerMask ObstacleLayers => _obstacleLayers;
+    public FOVStateSnapshot StateSnapshot => _stateSnapshot;
 
     #endregion
 
@@ -71,15 +83,12 @@ public class FOVController : NetworkBehaviour
 
     private FOVMeshGenerator _meshGenerator;
     private FOVCalculator _calculator;
+    private readonly FOVStateSnapshot _stateSnapshot = new();
     private float _currentRange;
     private float _currentAngle;
     private bool _isTransitioning;
     private Vector3 _smoothedForward;
     private readonly float[] _shaderHitDistances = new float[MAX_SHADER_HIT_DISTANCE_COUNT];
-
-    private float[] _lastHitDistances;
-    private float _lastStartAngle;
-    private float _lastEndAngle;
 
     #endregion
 
@@ -127,8 +136,6 @@ public class FOVController : NetworkBehaviour
         if (_smoothedForward == Vector3.zero) _smoothedForward = Vector3.forward;
         _currentRange = _baseViewRange > 0 ? _baseViewRange : 15f;
         _currentAngle = CIRCULAR_ANGLE;
-        _lastStartAngle = -180f;
-        _lastEndAngle = 180f;
 
         // [DEBUG] Pre-initialize MeshGenerator to avoid data gap
         if (Application.isPlaying && (Application.isEditor || UnityEngine.SystemInfo.graphicsDeviceType != UnityEngine.Rendering.GraphicsDeviceType.Null))
@@ -339,48 +346,61 @@ public class FOVController : NetworkBehaviour
 
         Vector3 origin = transform.position;
         float[] hitDistances;
+        float startAngle;
+        float endAngle;
 
         if (_currentAngle >= ANGLE_THRESHOLD)
         {
-            hitDistances = _calculator.CalculateCircularFOV(origin, _smoothedForward, _currentRange, _rayCount, _fovHeight);
-            _lastStartAngle = -180f;
-            _lastEndAngle = 180f;
+            hitDistances = _calculator.CalculateCircularFOV(origin, _smoothedForward, _currentRange, _rayCount, _obstacleSampleHeight);
+            startAngle = -180f;
+            endAngle = 180f;
         }
         else
         {
             hitDistances = _calculator.CalculateCompositeFOV(
                 origin, _smoothedForward, _currentRange, _currentAngle,
-                _localPlayerViewRange, _rayCount, _fovHeight);
-            _lastStartAngle = -180f;
-            _lastEndAngle = 180f;
+                _localPlayerViewRange, _rayCount, _obstacleSampleHeight);
+            startAngle = -180f;
+            endAngle = 180f;
         }
 
-        _lastHitDistances = hitDistances;
-        
-
-
+        UpdateVisibilitySnapshot(origin, startAngle, endAngle, hitDistances);
 
         _meshGenerator.UpdateMesh(
-            hitDistances, _lastStartAngle, _lastEndAngle,
-            origin + Vector3.up * _fovHeight, _smoothedForward,
+            hitDistances, _stateSnapshot.StartAngle, _stateSnapshot.EndAngle,
+            origin + Vector3.up * _fovHeight,
+            origin + Vector3.up * _revealStencilHeight,
+            _smoothedForward,
             _enableSoftEdge, _edgeSoftness);
 
-
-
-
-
-        UpdateShaderProperties(origin);
+        UpdateShaderProperties();
+        FOVRevealAgent.UpdateAll();
     }
 
-    private void UpdateShaderProperties(Vector3 origin)
+    private void UpdateVisibilitySnapshot(Vector3 origin, float startAngle, float endAngle, float[] hitDistances)
+    {
+        int hitDistanceCount = hitDistances != null ? hitDistances.Length : 0;
+
+        _stateSnapshot.Update(
+            origin,
+            _smoothedForward,
+            _currentRange,
+            _currentAngle,
+            startAngle,
+            endAngle,
+            hitDistances,
+            hitDistanceCount);
+    }
+
+    private void UpdateShaderProperties()
     {
         if (_fovMaterial != null)
         {
-            _fovMaterial.SetFloat("_ViewRadius", _currentRange);
+            _fovMaterial.SetFloat("_ViewRadius", _stateSnapshot.CurrentRange);
             _fovMaterial.SetFloat("_FalloffExp", _falloffExp);
         }
 
-        Vector2 forwardXZ = new Vector2(_smoothedForward.x, _smoothedForward.z);
+        Vector2 forwardXZ = new Vector2(_stateSnapshot.Forward.x, _stateSnapshot.Forward.z);
         if (forwardXZ.sqrMagnitude < 0.0001f)
         {
             forwardXZ = Vector2.up;
@@ -406,49 +426,23 @@ public class FOVController : NetworkBehaviour
 
         int hitDistanceCount = PopulateShaderHitDistanceBuffer();
 
-        Shader.SetGlobalVector("_FOVCenter", origin);
-        Shader.SetGlobalFloat("_FOVRange", _currentRange);
+        Shader.SetGlobalVector("_FOVCenter", _stateSnapshot.Origin);
+        Shader.SetGlobalFloat("_FOVRange", _stateSnapshot.CurrentRange);
         Shader.SetGlobalFloat("_FOVEdgeSoftness", _edgeSoftness);
         Shader.SetGlobalFloat("_FOVEnabled", 1.0f); // Enable FOV dimming in game
         Shader.SetGlobalVector("_FOVProjectionOffset", projectionOffset);
-        Shader.SetGlobalFloat("_FOVBaseY", origin.y);
+        Shader.SetGlobalFloat("_FOVBaseY", _stateSnapshot.Origin.y);
         Shader.SetGlobalVector("_FOVForwardXZ", new Vector4(forwardXZ.x, forwardXZ.y, 0f, 0f));
-        Shader.SetGlobalFloat("_FOVStartAngle", _lastStartAngle);
-        Shader.SetGlobalFloat("_FOVEndAngle", _lastEndAngle);
+        Shader.SetGlobalFloat("_FOVStartAngle", _stateSnapshot.StartAngle);
+        Shader.SetGlobalFloat("_FOVEndAngle", _stateSnapshot.EndAngle);
         Shader.SetGlobalFloat("_FOVHitDistanceCount", hitDistanceCount);
         Shader.SetGlobalFloatArray("_FOVHitDistances", _shaderHitDistances);
     }
 
     private int PopulateShaderHitDistanceBuffer()
     {
-        int hitDistanceCount = _lastHitDistances != null
-            ? Mathf.Min(_lastHitDistances.Length, MAX_SHADER_HIT_DISTANCE_COUNT)
-            : 0;
-
         float fallbackDistance = _currentRange > 0.01f ? _currentRange : _baseViewRange;
-
-        if (hitDistanceCount >= 2)
-        {
-            for (int i = 0; i < hitDistanceCount; i++)
-            {
-                _shaderHitDistances[i] = _lastHitDistances[i];
-            }
-
-            fallbackDistance = _shaderHitDistances[hitDistanceCount - 1];
-        }
-        else
-        {
-            hitDistanceCount = 2;
-            _shaderHitDistances[0] = fallbackDistance;
-            _shaderHitDistances[1] = fallbackDistance;
-        }
-
-        for (int i = hitDistanceCount; i < MAX_SHADER_HIT_DISTANCE_COUNT; i++)
-        {
-            _shaderHitDistances[i] = fallbackDistance;
-        }
-
-        return hitDistanceCount;
+        return _stateSnapshot.CopyHitDistancesTo(_shaderHitDistances, MAX_SHADER_HIT_DISTANCE_COUNT, fallbackDistance);
     }
 
     #endregion
@@ -461,54 +455,12 @@ public class FOVController : NetworkBehaviour
     /// <summary>
     /// 주어진 월드 좌표가 현재 FOV 내부에 있는지 확인합니다.
     /// </summary>
-    public bool IsInsideFOV(Vector3 worldPos)
-    {
-        if (_lastHitDistances == null || _lastHitDistances.Length == 0) return false;
-
-        Vector3 toTarget = worldPos - transform.position;
-        toTarget.y = 0;
-        float distance = toTarget.magnitude;
-
-        if (distance > _currentRange + 1f) return false;
-
-        Vector3 forward = transform.forward;
-        forward.y = 0;
-        if (forward == Vector3.zero) forward = Vector3.forward;
-
-        float angleToTarget = Vector3.SignedAngle(forward, toTarget, Vector3.up);
-        if (angleToTarget < _lastStartAngle || angleToTarget > _lastEndAngle) return false;
-
-        float angleRange = _lastEndAngle - _lastStartAngle;
-        if (angleRange <= 0) return false;
-
-        float t = (angleToTarget - _lastStartAngle) / angleRange;
-        int index = Mathf.Clamp(Mathf.RoundToInt(t * (_lastHitDistances.Length - 1)), 0, _lastHitDistances.Length - 1);
-
-        return distance <= _lastHitDistances[index];
-    }
+    public bool IsInsideFOV(Vector3 worldPos) => FOVVisibilityQuery.IsInside(_stateSnapshot, worldPos);
 
     /// <summary>
     /// 콜라이더의 일부라도 FOV 안에 있는지 확인합니다.
     /// </summary>
-    public bool IsColliderInsideFOV(Collider collider)
-    {
-        if (collider == null) return false;
-
-        Bounds bounds = collider.bounds;
-        if (IsInsideFOV(bounds.center)) return true;
-
-        Vector3 min = bounds.min;
-        Vector3 max = bounds.max;
-
-        return IsInsideFOV(new Vector3(min.x, min.y, min.z)) ||
-               IsInsideFOV(new Vector3(max.x, min.y, min.z)) ||
-               IsInsideFOV(new Vector3(min.x, min.y, max.z)) ||
-               IsInsideFOV(new Vector3(max.x, min.y, max.z)) ||
-               IsInsideFOV(new Vector3(min.x, max.y, min.z)) ||
-               IsInsideFOV(new Vector3(max.x, max.y, min.z)) ||
-               IsInsideFOV(new Vector3(min.x, max.y, max.z)) ||
-               IsInsideFOV(new Vector3(max.x, max.y, max.z));
-    }
+    public bool IsColliderInsideFOV(Collider collider) => FOVVisibilityQuery.IsColliderInside(_stateSnapshot, collider);
 
     #endregion
 }

@@ -26,8 +26,11 @@ public class FOVRendererFeature : ScriptableRendererFeature
     #region Private Fields
 
     private Material _stencilWriterMaterial;
+    private Material _overlayStencilWriterMaterial;
     private FOVStencilWriterPass _stencilWriterPass;
+    private FOVStencilWriterPass _overlayStencilWriterPass;
     private FOVRenderPass _renderPass;
+    private FOVOverlayPass _overlayPass;
     private FOVStencilClipPass _stencilClipPass;
 
     #endregion
@@ -37,6 +40,7 @@ public class FOVRendererFeature : ScriptableRendererFeature
     public override void Create()
     {
         Shader stencilWriterShader = Shader.Find("Hidden/ProjectVOID/FOVStencilWriter");
+        Shader overlayStencilWriterShader = Shader.Find("Hidden/ProjectVOID/FOVOverlayStencilWriter");
         if (stencilWriterShader != null)
         {
             if (_stencilWriterMaterial != null)
@@ -56,9 +60,13 @@ public class FOVRendererFeature : ScriptableRendererFeature
                 name = "FOV Stencil Writer"
             };
 
-            _stencilWriterPass = new FOVStencilWriterPass(_stencilWriterMaterial)
+            _stencilWriterPass = new FOVStencilWriterPass(
+                _stencilWriterMaterial,
+                FOVStencilWriterPass.StencilMatrixSource.RevealStencil)
             {
-                renderPassEvent = RenderPassEvent.BeforeRenderingOpaques
+                // Experiment: write reveal stencil before depth/depth-normal prepasses
+                // so FOV-aware shaders can clip those passes as well.
+                renderPassEvent = RenderPassEvent.BeforeRenderingPrePasses
             };
         }
         else
@@ -67,16 +75,53 @@ public class FOVRendererFeature : ScriptableRendererFeature
             _stencilWriterPass = null;
         }
 
-        _renderPass = new FOVRenderPass(settings.fovMeshMaterial, settings.overlayMaterial)
+        if (overlayStencilWriterShader != null)
+        {
+            if (_overlayStencilWriterMaterial != null)
+            {
+                if (Application.isPlaying)
+                {
+                    Object.Destroy(_overlayStencilWriterMaterial);
+                }
+                else
+                {
+                    Object.DestroyImmediate(_overlayStencilWriterMaterial);
+                }
+            }
+
+            _overlayStencilWriterMaterial = new Material(overlayStencilWriterShader)
+            {
+                name = "FOV Overlay Stencil Writer"
+            };
+
+            _overlayStencilWriterPass = new FOVStencilWriterPass(
+                _overlayStencilWriterMaterial,
+                FOVStencilWriterPass.StencilMatrixSource.Visual)
+            {
+                renderPassEvent = RenderPassEvent.AfterRenderingOpaques + 1
+            };
+        }
+        else
+        {
+            _overlayStencilWriterMaterial = null;
+            _overlayStencilWriterPass = null;
+        }
+
+        _renderPass = new FOVRenderPass(settings.fovMeshMaterial)
         {
             renderPassEvent = RenderPassEvent.AfterRenderingOpaques
+        };
+
+        _overlayPass = new FOVOverlayPass(settings.overlayMaterial)
+        {
+            renderPassEvent = RenderPassEvent.AfterRenderingOpaques + 2
         };
 
         if (settings.stencilClipLayers != 0)
         {
             _stencilClipPass = new FOVStencilClipPass(settings.stencilClipLayers)
             {
-                renderPassEvent = RenderPassEvent.AfterRenderingOpaques + 1
+                renderPassEvent = RenderPassEvent.AfterRenderingOpaques + 3
             };
         }
     }
@@ -97,9 +142,19 @@ public class FOVRendererFeature : ScriptableRendererFeature
                 renderer.EnqueuePass(_stencilWriterPass);
             }
 
-            if (settings.fovMeshMaterial != null && settings.overlayMaterial != null)
+            if (settings.fovMeshMaterial != null)
             {
                 renderer.EnqueuePass(_renderPass);
+            }
+
+            if (settings.overlayMaterial != null)
+            {
+                if (_overlayStencilWriterPass != null)
+                {
+                    renderer.EnqueuePass(_overlayStencilWriterPass);
+                }
+
+                renderer.EnqueuePass(_overlayPass);
             }
 
             if (_stencilClipPass != null)
@@ -133,6 +188,20 @@ public class FOVRendererFeature : ScriptableRendererFeature
             }
 
             _stencilWriterMaterial = null;
+        }
+
+        if (_overlayStencilWriterMaterial != null)
+        {
+            if (Application.isPlaying)
+            {
+                Object.Destroy(_overlayStencilWriterMaterial);
+            }
+            else
+            {
+                Object.DestroyImmediate(_overlayStencilWriterMaterial);
+            }
+
+            _overlayStencilWriterMaterial = null;
         }
 
         base.Dispose(disposing);

@@ -37,6 +37,31 @@ public class GunData : WeaponData
     [Header("시각 효과")]
     [SerializeField] private GameObject _muzzleFlashPrefab;
 
+    [Header("반동")]
+    [Tooltip("발사 시 무기가 뒤로 밀리는 거리")]
+    [SerializeField] [Min(0f)] private float _recoilKickBackDistance = 0.025f;
+
+    [Tooltip("발사 시 무기 앞부분이 위로 들리는 각도")]
+    [SerializeField] [Min(0f)] private float _recoilPitchAngle = 4f;
+
+    [Tooltip("발사 시 좌우로 흔들릴 수 있는 최대 각도")]
+    [SerializeField] [Min(0f)] private float _recoilYawAngle = 0.5f;
+
+    [Tooltip("반동 목표값으로 따라가는 속도")]
+    [SerializeField] [Min(1f)] private float _recoilApplySpeed = 28f;
+
+    [Tooltip("반동이 원위치로 복귀하는 속도")]
+    [SerializeField] [Min(1f)] private float _recoilReturnSpeed = 18f;
+
+    [Tooltip("뒤로 밀리는 반동의 최대 누적 거리")]
+    [SerializeField] [Min(0f)] private float _maxRecoilKickBackDistance = 0.06f;
+
+    [Tooltip("위로 드는 반동의 최대 누적 각도")]
+    [SerializeField] [Min(0f)] private float _maxRecoilPitchAngle = 12f;
+
+    [Tooltip("좌우 흔들림의 최대 누적 각도")]
+    [SerializeField] [Min(0f)] private float _maxRecoilYawAngle = 2f;
+
     [Header("사운드")]
     [SerializeField] private AudioCue _fireAudioCue;
     [SerializeField] private AudioCue _reloadStartAudioCue;
@@ -126,6 +151,46 @@ public class GunData : WeaponData
     /// 총 데미지를 반환합니다 (Damage × ProjectilesPerShot).
     /// </summary>
     public override float TotalDamage => Damage * ProjectilesPerShot;
+
+    /// <summary>
+    /// 발사 시 뒤로 밀리는 거리입니다.
+    /// </summary>
+    public float RecoilKickBackDistance => _recoilKickBackDistance;
+
+    /// <summary>
+    /// 발사 시 위로 드는 각도입니다.
+    /// </summary>
+    public float RecoilPitchAngle => _recoilPitchAngle;
+
+    /// <summary>
+    /// 발사 시 좌우 흔들림 각도입니다.
+    /// </summary>
+    public float RecoilYawAngle => _recoilYawAngle;
+
+    /// <summary>
+    /// 반동 목표값으로 따라가는 속도입니다.
+    /// </summary>
+    public float RecoilApplySpeed => _recoilApplySpeed;
+
+    /// <summary>
+    /// 반동이 복귀하는 속도입니다.
+    /// </summary>
+    public float RecoilReturnSpeed => _recoilReturnSpeed;
+
+    /// <summary>
+    /// 뒤로 밀리는 반동의 최대 누적 거리입니다.
+    /// </summary>
+    public float MaxRecoilKickBackDistance => _maxRecoilKickBackDistance;
+
+    /// <summary>
+    /// 위로 드는 반동의 최대 누적 각도입니다.
+    /// </summary>
+    public float MaxRecoilPitchAngle => _maxRecoilPitchAngle;
+
+    /// <summary>
+    /// 좌우 흔들림의 최대 누적 각도입니다.
+    /// </summary>
+    public float MaxRecoilYawAngle => _maxRecoilYawAngle;
 
     /// <summary>
     /// 발사체 퍼짐 각도를 반환합니다.

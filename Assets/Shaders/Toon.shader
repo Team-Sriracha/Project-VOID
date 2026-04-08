@@ -503,7 +503,7 @@ Shader "Custom/Toon"
             HLSLPROGRAM
             #pragma target 2.0
             #pragma vertex MetaVertex
-            #pragma fragment MetaFragment
+            #pragma fragment ToonMetaFragment
 
             #pragma shader_feature EDITOR_VISUALIZATION
 
@@ -555,7 +555,7 @@ Shader "Custom/Toon"
                 return output;
             }
 
-            half4 MetaFragment(Varyings input) : SV_Target
+            half4 ToonMetaFragment(Varyings input) : SV_Target
             {
                 half4 texColor = SAMPLE_TEXTURE2D(_MainTex, sampler_MainTex, input.uv);
                 half3 albedo = texColor.rgb * _Color.rgb;

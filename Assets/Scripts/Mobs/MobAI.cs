@@ -1,5 +1,4 @@
 ﻿using FishNet.Object;
-using FishNet.Object.Synchronizing;
 using FishNet.Connection;
 using UnityEngine;
 using UnityEngine.AI;
@@ -17,7 +16,6 @@ public class MobAI : NetworkBehaviour
     private const float POSITION_THRESHOLD = 0.5f;
     private const float ROTATION_SPEED = 10f;
     private const int MAX_PLAYERS_DETECTED = 10;
-
     #endregion
 
     #region Serialized Fields
@@ -62,7 +60,8 @@ public class MobAI : NetworkBehaviour
     private Collider[] _detectedColliders;
     private Transform _targetTransform;
     private bool _isAttackActive;
-
+    private int _attackSequenceStep;
+    private MobAttackPatternData _activeAttackPattern;
     #endregion
 
     #region Fishnet Lifecycle
@@ -92,6 +91,7 @@ public class MobAI : NetworkBehaviour
         SpawnPosition = transform.position;
         CurrentState = MonsterState.Idle;
         TargetConnection = null;
+        ResetAttackCycle(resetSequence: true);
 
         TimeManager.OnTick += OnTick;
     }
@@ -116,7 +116,7 @@ public class MobAI : NetworkBehaviour
             _navMeshAgent.enabled = false;
         }
 
-        FOVStencilMaterialRuntimeApplier.ApplyToHierarchy(gameObject);
+        FOVRevealAgent.Ensure(gameObject, FOVRevealMode.StencilOnly);
     }
 
     public override void OnStopServer()
@@ -248,7 +248,8 @@ public class MobAI : NetworkBehaviour
             return;
         }
 
-        if (_data != null && distanceToTarget <= _data.AttackRange)
+        float attackRange = GetCurrentAttackRange();
+        if (_data != null && distanceToTarget <= attackRange)
         {
             SetState(MonsterState.Attack);
             return;
@@ -282,7 +283,8 @@ public class MobAI : NetworkBehaviour
 
         float distanceToTarget = Vector3.Distance(transform.position, _targetTransform.position);
 
-        if (_data != null && distanceToTarget > _data.AttackRange * 1.1f)
+        float attackRange = GetCurrentAttackRange();
+        if (_data != null && distanceToTarget > attackRange * 1.1f)
         {
             SetState(MonsterState.Chase);
             return;
@@ -344,7 +346,7 @@ public class MobAI : NetworkBehaviour
             case MonsterState.Idle:
                 TargetConnection = null;
                 _targetTransform = null;
-                _isAttackActive = false;
+                ResetAttackCycle(resetSequence: true);
                 break;
             case MonsterState.Alert:
                 // Alert 상태 진입 시 종료 시간 설정 (AlertDuration 후 Chase 전환)
@@ -357,8 +359,10 @@ public class MobAI : NetworkBehaviour
             case MonsterState.Return:
                 TargetConnection = null;
                 _targetTransform = null;
+                ResetAttackCycle(resetSequence: true);
                 break;
             case MonsterState.Dead:
+                ResetAttackCycle(resetSequence: true);
                 StopNavMeshAgent();
                 break;
         }
@@ -574,18 +578,22 @@ public class MobAI : NetworkBehaviour
     {
         if (_data == null || _targetTransform == null) return;
 
+        MobAttackPatternData attackPattern = GetPlannedAttackPattern();
+        int attackAnimationIndex = attackPattern != null ? attackPattern.AnimationIndex : 0;
+        float attackCooldown = attackPattern != null ? attackPattern.AttackCooldown : _data.AttackCooldown;
+
+        _activeAttackPattern = attackPattern;
+
         if (_animationController != null)
         {
-            _animationController.PlayAttack();
+            _animationController.PlayAttack(attackAnimationIndex);
         }
 
-        // _attackDamageTime = Time.time + _data.AttackAnimationDuration; // Deprecated
-        _attackCooldownEndTime = Time.time + _data.AttackCooldown;
-        
-        _attackCooldownEndTime = Time.time + _data.AttackCooldown;
+        _attackCooldownEndTime = Time.time + attackCooldown;
+        _attackSequenceStep++;
         _isAttackActive = true;
         
-        LogDebug($"공격 시작! 애니메이션 이벤트 대기 중...");
+        LogDebug($"공격 시작! 패턴: {attackPattern?.PatternName ?? "Default"}, 애니메이션 인덱스: {attackAnimationIndex}");
     }
 
     // Animation Controller에서 호출됨
@@ -593,13 +601,19 @@ public class MobAI : NetworkBehaviour
     {
         // _attackDamageTime = 0;
 
-        if (!_isAttackActive) return; // 중복 데미지 방지
-        _isAttackActive = false;
+        if (!_isAttackActive) return;
 
-        if (_data == null || _targetTransform == null) return;
+        if (_data == null || _targetTransform == null)
+        {
+            return;
+        }
+
+        MobAttackPatternData attackPattern = _activeAttackPattern;
+        float attackRange = attackPattern != null ? attackPattern.AttackRange : _data.AttackRange;
+        float attackDamage = attackPattern != null ? attackPattern.AttackDamage : _data.AttackDamage;
 
         float distanceToTarget = Vector3.Distance(transform.position, _targetTransform.position);
-        if (distanceToTarget > _data.AttackRange * 1.2f)
+        if (distanceToTarget > attackRange * 1.2f)
         {
             LogDebug("데미지 적용 시점에 타겟이 공격 범위 밖으로 이탈함.");
             return;
@@ -612,8 +626,45 @@ public class MobAI : NetworkBehaviour
             Vector3 directionToMob = (transform.position - _targetTransform.position).normalized;
             Vector3 hitPosition = _targetTransform.position + directionToMob * 0.3f + Vector3.up * 1f;
             
-            damageable.TakeDamage(_data.AttackDamage, null, hitPosition);
-            LogDebug($"데미지 적용! {_data.AttackDamage} 데미지.");
+            damageable.TakeDamage(attackDamage, null, hitPosition);
+            LogDebug($"데미지 적용! {attackDamage} 데미지.");
+        }
+    }
+
+    private MobAttackPatternData GetPlannedAttackPattern()
+    {
+        if (_data == null || _data.AttackPatternCount == 0)
+        {
+            return null;
+        }
+
+        return _data.GetAttackPatternForSequenceStep(_attackSequenceStep);
+    }
+
+    private float GetCurrentAttackRange()
+    {
+        if (_data == null)
+        {
+            return 0f;
+        }
+
+        if (_isAttackActive && _activeAttackPattern != null)
+        {
+            return _activeAttackPattern.AttackRange;
+        }
+
+        MobAttackPatternData plannedAttackPattern = GetPlannedAttackPattern();
+        return plannedAttackPattern != null ? plannedAttackPattern.AttackRange : _data.AttackRange;
+    }
+
+    private void ResetAttackCycle(bool resetSequence)
+    {
+        _isAttackActive = false;
+        _activeAttackPattern = null;
+
+        if (resetSequence)
+        {
+            _attackSequenceStep = 0;
         }
     }
 

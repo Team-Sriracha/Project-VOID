@@ -68,7 +68,7 @@ public class Projectile : NetworkBehaviour
         base.OnStartClient();
         
         _projectileCollider = GetComponent<Collider>();
-        FOVStencilMaterialRuntimeApplier.ApplyToHierarchy(gameObject);
+        FOVRevealAgent.Ensure(gameObject, FOVRevealMode.StencilOnly);
         
         // 발사자의 모든 Collider와 충돌 무시 설정
         if (OwnerConnection.Value != null && OwnerConnection.Value.FirstObject != null)

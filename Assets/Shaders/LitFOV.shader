@@ -47,8 +47,8 @@ Shader "Custom/Lit FOV"
         // FOV Properties
         _DimColor ("Dim Color", Color) = (0.3, 0.3, 0.4, 1)
         _FadeWidth ("Fade Width", Range(0.5, 3)) = 1
+        [HideInInspector] _FOVRevealAnchorWS ("FOV Reveal Anchor WS", Vector) = (0, 0, 0, 0)
         [HideInInspector] _GlobalStencilComp ("Global Stencil Comp", Float) = 8
-
         // Blending state
         _Surface("__surface", Float) = 0.0
         _Blend("__blend", Float) = 0.0
@@ -98,8 +98,11 @@ Shader "Custom/Lit FOV"
             // FOV Stencil
             Stencil
             {
-                Ref 1
+                Ref 3
                 Comp [_GlobalStencilComp]
+                ReadMask 1
+                WriteMask 2
+                Pass Replace
             }
 
             Blend[_SrcBlend][_DstBlend], [_SrcBlendAlpha][_DstBlendAlpha]
@@ -173,6 +176,7 @@ Shader "Custom/Lit FOV"
             float _FOVEdgeSoftness;
             half4 _DimColor;
             half _FadeWidth;
+            float4 _FOVRevealAnchorWS;
             float _FOVEnabled; // 0 = disabled (preview/scene), 1 = enabled (game)
             float4 _FOVProjectionOffset;
             float _FOVBaseY;
@@ -213,6 +217,18 @@ Shader "Custom/Lit FOV"
                 return lerp(_FOVHitDistances[lowerIndex], _FOVHitDistances[upperIndex], interpolation);
             }
 
+            float2 GetRevealProjectedOffset(float3 positionWS)
+            {
+                if (_FOVRevealAnchorWS.w > 0.5)
+                {
+                    return _FOVRevealAnchorWS.xz - _FOVCenter.xz;
+                }
+
+                float projectedHeight = max(positionWS.y - _FOVBaseY, 0.0);
+                float2 projectedXZ = positionWS.xz + (_FOVProjectionOffset.xy * projectedHeight);
+                return projectedXZ - _FOVCenter.xz;
+            }
+
             half4 LitPassFragmentFOV(Varyings input) : SV_Target
             {
                 UNITY_SETUP_INSTANCE_ID(input);
@@ -241,9 +257,7 @@ Shader "Custom/Lit FOV"
                 if (_FOVEnabled > 0.5 && _FOVRange > 1.0)
                 {
                     float3 posWS = input.positionWS;
-                    float projectedHeight = max(posWS.y - _FOVBaseY, 0.0);
-                    float2 projectedXZ = posWS.xz + (_FOVProjectionOffset.xy * projectedHeight);
-                    float2 projectedOffset = projectedXZ - _FOVCenter.xz;
+                    float2 projectedOffset = GetRevealProjectedOffset(posWS);
                     float dist = length(projectedOffset);
                     float boundaryDistance = SampleFOVBoundaryDistance(projectedOffset, dist);
                     float dimWidth = max(_FOVEdgeSoftness + _FadeWidth, 0.1);
@@ -291,6 +305,15 @@ Shader "Custom/Lit FOV"
             Name "DepthOnly"
             Tags { "LightMode" = "DepthOnly" }
 
+            Stencil
+            {
+                Ref 3
+                Comp [_GlobalStencilComp]
+                ReadMask 1
+                WriteMask 2
+                Pass Replace
+            }
+
             ZWrite On
             ColorMask R
             Cull[_Cull]
@@ -316,6 +339,15 @@ Shader "Custom/Lit FOV"
         {
             Name "DepthNormals"
             Tags { "LightMode" = "DepthNormals" }
+
+            Stencil
+            {
+                Ref 3
+                Comp [_GlobalStencilComp]
+                ReadMask 1
+                WriteMask 2
+                Pass Replace
+            }
 
             ZWrite On
             Cull[_Cull]

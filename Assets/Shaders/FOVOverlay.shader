@@ -17,9 +17,10 @@ Shader "Custom/FOV/FOVOverlay"
         // Stencil: FOV 영역(1)이 아닌 곳만 렌더링
         Stencil
         {
-            Ref 1
+            Ref 2
             Comp NotEqual
             Pass Keep
+            ReadMask 2
         }
 
         ZWrite Off

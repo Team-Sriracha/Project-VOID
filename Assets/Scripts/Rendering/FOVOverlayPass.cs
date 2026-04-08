@@ -4,27 +4,27 @@ using UnityEngine.Rendering.Universal;
 using UnityEngine.Rendering.RenderGraphModule;
 
 /// <summary>
-/// FOV 시각 메시만 렌더링하는 Render Pass입니다. RenderGraph API를 지원합니다.
+/// FOV 바깥 영역을 어둡게 덮는 오버레이 전용 Render Pass입니다.
 /// </summary>
-public class FOVRenderPass : ScriptableRenderPass
+public class FOVOverlayPass : ScriptableRenderPass
 {
     #region Constants
 
-    private const string PASS_NAME = "FOV System";
+    private const string PASS_NAME = "FOV Overlay";
 
     #endregion
 
     #region Private Fields
 
-    private readonly Material _fovMeshMaterial;
+    private readonly Material _overlayMaterial;
 
     #endregion
 
     #region Constructor
 
-    public FOVRenderPass(Material fovMeshMaterial)
+    public FOVOverlayPass(Material overlayMaterial)
     {
-        _fovMeshMaterial = fovMeshMaterial;
+        _overlayMaterial = overlayMaterial;
         profilingSampler = new ProfilingSampler(PASS_NAME);
     }
 
@@ -35,9 +35,9 @@ public class FOVRenderPass : ScriptableRenderPass
     [System.Obsolete("Use RecordRenderGraph instead.")]
     public override void OnCameraSetup(CommandBuffer cmd, ref RenderingData renderingData)
     {
-        // Configure to render to camera's color and depth targets (includes stencil buffer)
-        ConfigureTarget(renderingData.cameraData.renderer.cameraColorTargetHandle, 
-                        renderingData.cameraData.renderer.cameraDepthTargetHandle);
+        ConfigureTarget(
+            renderingData.cameraData.renderer.cameraColorTargetHandle,
+            renderingData.cameraData.renderer.cameraDepthTargetHandle);
     }
 
     #endregion
@@ -46,27 +46,19 @@ public class FOVRenderPass : ScriptableRenderPass
 
     private class PassData
     {
-        public Material FovMeshMaterial;
-        public Mesh FovMesh;
-        public Matrix4x4 FovMatrix;
+        public Material OverlayMaterial;
     }
 
     public override void RecordRenderGraph(RenderGraph renderGraph, ContextContainer frameData)
     {
-        if (_fovMeshMaterial == null)
-        {
-            return;
-        }
-        if (!FOVRenderData.HasFOVMeshData)
+        if (_overlayMaterial == null || !FOVRenderData.HasFOVMeshData)
         {
             return;
         }
 
         using (var builder = renderGraph.AddRasterRenderPass<PassData>(PASS_NAME, out var passData, profilingSampler))
         {
-            passData.FovMeshMaterial = _fovMeshMaterial;
-            passData.FovMesh = FOVRenderData.FOVMesh;
-            passData.FovMatrix = FOVRenderData.FOVVisualMatrix;
+            passData.OverlayMaterial = _overlayMaterial;
 
             UniversalResourceData resourceData = frameData.Get<UniversalResourceData>();
             builder.SetRenderAttachment(resourceData.activeColorTexture, 0);
@@ -74,7 +66,7 @@ public class FOVRenderPass : ScriptableRenderPass
 
             builder.SetRenderFunc((PassData data, RasterGraphContext context) =>
             {
-                context.cmd.DrawMesh(data.FovMesh, data.FovMatrix, data.FovMeshMaterial, 0, 0);
+                context.cmd.DrawProcedural(Matrix4x4.identity, data.OverlayMaterial, 0, MeshTopology.Triangles, 3);
             });
         }
     }
@@ -86,18 +78,13 @@ public class FOVRenderPass : ScriptableRenderPass
     [System.Obsolete("Use RecordRenderGraph instead.")]
     public override void Execute(ScriptableRenderContext context, ref RenderingData renderingData)
     {
-        if (_fovMeshMaterial == null)
-        {
-            return;
-        }
-        if (!FOVRenderData.HasFOVMeshData)
+        if (_overlayMaterial == null || !FOVRenderData.HasFOVMeshData)
         {
             return;
         }
 
         CommandBuffer cmd = CommandBufferPool.Get(PASS_NAME);
-        cmd.DrawMesh(FOVRenderData.FOVMesh, FOVRenderData.FOVVisualMatrix, _fovMeshMaterial, 0, 0);
-
+        cmd.DrawProcedural(Matrix4x4.identity, _overlayMaterial, 0, MeshTopology.Triangles, 3);
         context.ExecuteCommandBuffer(cmd);
         CommandBufferPool.Release(cmd);
     }
