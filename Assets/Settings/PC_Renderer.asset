@@ -16,6 +16,8 @@ MonoBehaviour:
   settings:
     fovMeshMaterial: {fileID: 2100000, guid: ffb4c7270128e7f46a04d5851153f900, type: 2}
     overlayMaterial: {fileID: 2100000, guid: 542266e1532f24748ad1375efaf36082, type: 2}
+    stencilWriterShader: {fileID: 4800000, guid: 09e995bc39d341899f1b5ac9cb15b67d, type: 3}
+    overlayStencilWriterShader: {fileID: 4800000, guid: 7d7e1884c94abd6498cd21e3496edcea, type: 3}
     stencilClipLayers:
       serializedVersion: 2
       m_Bits: 0

@@ -210,6 +210,7 @@ public class Projectile : NetworkBehaviour
         if (_hitEffectPrefab == null) return;
 
         GameObject effect = Instantiate(_hitEffectPrefab, position, Quaternion.LookRotation(normal));
+        FOVRevealAgent.Ensure(effect, FOVRevealMode.StencilOnly);
         Destroy(effect, 2f);
     }
 

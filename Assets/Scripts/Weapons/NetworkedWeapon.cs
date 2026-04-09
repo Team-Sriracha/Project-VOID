@@ -1011,6 +1011,7 @@ public class NetworkedWeapon : NetworkBehaviour
         Quaternion rot = parent.rotation;
 
         GameObject flash = Instantiate(gunData.MuzzleFlashPrefab, pos, rot, parent);
+        FOVRevealAgent.Ensure(flash, FOVRevealMode.StencilOnly);
         Destroy(flash, 0.5f);
     }
 

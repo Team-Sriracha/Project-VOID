@@ -15,6 +15,10 @@ public class FOVRendererFeature : ScriptableRendererFeature
         public Material fovMeshMaterial;
         public Material overlayMaterial;
 
+        [Header("Shaders")]
+        public Shader stencilWriterShader;
+        public Shader overlayStencilWriterShader;
+
         [Header("Stencil Clip")]
         public LayerMask stencilClipLayers;
     }
@@ -39,8 +43,13 @@ public class FOVRendererFeature : ScriptableRendererFeature
 
     public override void Create()
     {
-        Shader stencilWriterShader = Shader.Find("Hidden/ProjectVOID/FOVStencilWriter");
-        Shader overlayStencilWriterShader = Shader.Find("Hidden/ProjectVOID/FOVOverlayStencilWriter");
+        Shader stencilWriterShader = settings.stencilWriterShader != null
+            ? settings.stencilWriterShader
+            : Shader.Find("Hidden/ProjectVOID/FOVStencilWriter");
+        Shader overlayStencilWriterShader = settings.overlayStencilWriterShader != null
+            ? settings.overlayStencilWriterShader
+            : Shader.Find("Hidden/ProjectVOID/FOVOverlayStencilWriter");
+
         if (stencilWriterShader != null)
         {
             if (_stencilWriterMaterial != null)
@@ -71,6 +80,7 @@ public class FOVRendererFeature : ScriptableRendererFeature
         }
         else
         {
+            Debug.LogError("[FOVRendererFeature] FOVStencilWriter 셰이더를 찾을 수 없습니다. 빌드 설정 또는 Renderer Feature 참조를 확인하세요.");
             _stencilWriterMaterial = null;
             _stencilWriterPass = null;
         }
@@ -103,6 +113,7 @@ public class FOVRendererFeature : ScriptableRendererFeature
         }
         else
         {
+            Debug.LogError("[FOVRendererFeature] FOVOverlayStencilWriter 셰이더를 찾을 수 없습니다. 빌드 설정 또는 Renderer Feature 참조를 확인하세요.");
             _overlayStencilWriterMaterial = null;
             _overlayStencilWriterPass = null;
         }
